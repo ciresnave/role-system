@@ -9,18 +9,18 @@ keywords = ["rbac", "authorization", "permissions", "roles", "access-control"]
 categories = ["authentication", "web-programming"]
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 exclude = [
-    "src/error.rs.backup",
-    "src/error_broken.rs",
-    "src/error_fixed.rs", 
-    "src/error_new.rs",
-    "*.backup",
-    "TELEMETRY_*.md",
-    "IMPLEMENTATION_SUMMARY.md",
-    "PHASE1_COMPLETE.md",
-    "TEST_COVERAGE_ANALYSIS.md",
-    "examples/batch_test.rs",
-    "examples/phase1_improvements.rs",
-    "examples/telemetry_demo.rs"
+  "src/error.rs.backup",
+  "src/error_broken.rs",
+  "src/error_fixed.rs",
+  "src/error_new.rs",
+  "*.backup",
+  "TELEMETRY_*.md",
+  "IMPLEMENTATION_SUMMARY.md",
+  "PHASE1_COMPLETE.md",
+  "TEST_COVERAGE_ANALYSIS.md",
+  "examples/batch_test.rs",
+  "examples/phase1_improvements.rs",
+  "examples/telemetry_demo.rs",
 ]
 
 [features]
