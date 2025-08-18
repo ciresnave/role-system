@@ -1,0 +1,67 @@
+[package]
+name = "role-system"
+version = "1.0.0"
+edition = "2024"
+description = "A flexible and powerful role-based access control (RBAC) library for Rust applications"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ciresnave/role-system"
+keywords = ["rbac", "authorization", "permissions", "roles", "access-control"]
+categories = ["authentication", "web-programming"]
+authors = ["Eric Evans <ciresnave@gmail.com>"]
+
+[features]
+default = ["async", "audit"]
+async = ["tokio", "async-trait"]
+persistence = ["serde"]
+audit = ["log", "env_logger"]
+database = ["sqlx", "async"]
+telemetry = ["opentelemetry", "opentelemetry-semantic-conventions"]
+all = ["async", "persistence", "audit", "database", "telemetry"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0" }
+tokio = { version = "1.46", features = ["full"], optional = true }
+async-trait = { version = "0.1", optional = true }
+thiserror = "2.0.12"
+dashmap = "6.1.0"
+log = { version = "0.4", optional = true }
+env_logger = { version = "0.11.8", optional = true }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10" # Added for proper timezone handling
+uuid = { version = "1.0", features = ["v4", "serde"] }
+sqlx = { version = "0.8", features = [
+  "postgres",
+  "sqlite",
+  "runtime-tokio-rustls",
+  "chrono",
+  "uuid",
+  "json",
+], optional = true }
+
+# OpenTelemetry for observability
+opentelemetry = { version = "0.21", optional = true }
+opentelemetry-semantic-conventions = { version = "0.13", optional = true }
+num_cpus = "1.16.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = "0.6.0"
+env_logger = "0.11.8"
+actix-web = "4.4"
+axum = "0.8.4"
+rocket = "0.5"
+tokio = { version = "1.0", features = ["full"] }
+proptest = "1.0"
+mockall = "0.13.1"
+quickcheck = "1.0"
+quickcheck_macros = "1.0"
+rand = "0.8"
+
+[[bench]]
+name = "benchmark"
+harness = false
+
+[[bench]]
+name = "advanced_benchmarks"
+harness = false

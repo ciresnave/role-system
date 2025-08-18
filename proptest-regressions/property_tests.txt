@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d8c9d8c7f196f61259acefd8a37ec572badb5ef552e57f14b50c589a171cfcab # shrinks to action = "a", resource_type = "A-"
+cc b4b4b0c1b3104e26349ac46c84684cfa9504f071666761b1d0500726d869a483 # shrinks to subject = Subject { id: "A", subject_type: User, display_name: None, attributes: {} }, resource = Resource { id: "A", resource_type: "A", name: None, attributes: {}, path: None }, action = "A"
