@@ -12,6 +12,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2025-08-18
+
+### Fixed
+
+- **Critical Fix**: Resolved compilation error with `serde_json::Error` not implementing `Clone`
+  - Changed `Serialization` error variant from `serde_json::Error` to `String`
+  - Added custom `From<serde_json::Error>` implementation to preserve error messages
+  - This fixes the build failure when using the crate with newer versions of `serde_json`
+- **Code Quality**: Removed unused imports in temporal module
+
+### Technical Details
+
+The issue occurred because `serde_json` v1.0.96+ removed the `Clone` implementation from their `Error` type for security and API design reasons. Our error enum derived `Clone` but contained a `serde_json::Error` field, causing compilation failures.
+
+**Solution**: Store the error message as a `String` instead of the raw `serde_json::Error`, with automatic conversion preserving all error information.
+
 ## [1.0.0] - 2025-08-18
 
 ### Added

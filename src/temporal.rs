@@ -6,8 +6,6 @@ use crate::{
 };
 use chrono::{DateTime, Datelike, Duration, NaiveTime, Utc, Weekday};
 use chrono_tz::Tz;
-#[cfg(feature = "persistence")]
-use serde::{Deserialize, Serialize};
 
 /// Time-based permission that includes temporal constraints.
 #[derive(Debug, Clone)]

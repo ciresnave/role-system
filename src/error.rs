@@ -94,7 +94,7 @@ pub enum Error {
     /// Serialization error.
     #[cfg(feature = "persistence")]
     #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
+    Serialization(String),
 
     /// Storage operation failed.
     #[error("Storage operation failed: {0}")]
@@ -168,6 +168,14 @@ pub enum Error {
 
 /// Result type alias for role system operations.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Conversion from serde_json::Error to our Serialization error variant.
+#[cfg(feature = "persistence")]
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Self::Serialization(err.to_string())
+    }
+}
 
 impl Error {
     /// Validates an identifier (role name, subject ID, etc.) for security.
@@ -586,5 +594,26 @@ mod tests {
         assert!(error_string.contains("alice"));
         assert!(error_string.contains("delete:documents"));
         assert!(error_string.contains("confidential.txt"));
+    }
+
+    #[cfg(feature = "persistence")]
+    #[test]
+    fn test_serialization_error_conversion() {
+        // Test that we can convert serde_json::Error to our Error type
+        let json_error = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let our_error: Error = json_error.into();
+
+        match &our_error {
+            Error::Serialization(msg) => {
+                assert!(msg.contains("expected value"));
+            }
+            _ => panic!("Expected Serialization error variant"),
+        }
+
+        // Verify error can be cloned (which was the original issue)
+        let _cloned = our_error.clone();
+
+        let error_string = format!("{}", our_error);
+        assert!(error_string.contains("Serialization error"));
     }
 }
