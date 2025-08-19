@@ -23,6 +23,12 @@ pub trait Storage: Send + Sync {
 
     /// Update an existing role.
     fn update_role(&mut self, role: Role) -> Result<()>;
+
+    /// Get the number of stored roles.
+    fn role_count(&self) -> usize {
+        // Default implementation that tries to count via list_roles
+        self.list_roles().map(|roles| roles.len()).unwrap_or(0)
+    }
 }
 
 /// In-memory storage implementation using DashMap for thread safety.
@@ -135,7 +141,11 @@ pub mod file_storage {
             let reader = BufReader::new(file);
             let roles: HashMap<String, Role> = serde_json::from_reader(reader)?;
 
-            *self.roles.write().unwrap() = roles;
+            *self
+                .roles
+                .write()
+                .map_err(|e| Error::Storage(format!("Failed to acquire write lock: {}", e)))? =
+                roles;
             Ok(())
         }
 
@@ -149,7 +159,10 @@ pub mod file_storage {
                 .map_err(|e| Error::Storage(format!("Failed to create storage file: {}", e)))?;
 
             let writer = BufWriter::new(file);
-            let roles = self.roles.read().unwrap();
+            let roles = self
+                .roles
+                .read()
+                .map_err(|e| Error::Storage(format!("Failed to acquire read lock: {}", e)))?;
             serde_json::to_writer_pretty(writer, &*roles)?;
             Ok(())
         }
@@ -161,27 +174,43 @@ pub mod file_storage {
 
         /// Get the number of stored roles.
         pub fn role_count(&self) -> usize {
-            self.roles.read().unwrap().len()
+            self.roles.read().map(|roles| roles.len()).unwrap_or(0)
         }
     }
 
     impl Storage for FileStorage {
         fn store_role(&mut self, role: Role) -> Result<()> {
             let name = role.name().to_string();
-            self.roles.write().unwrap().insert(name, role);
+            self.roles
+                .write()
+                .map_err(|e| Error::Storage(format!("Failed to acquire write lock: {}", e)))?
+                .insert(name, role);
             self.save_to_disk()
         }
 
         fn get_role(&self, name: &str) -> Result<Option<Role>> {
-            Ok(self.roles.read().unwrap().get(name).cloned())
+            let roles = self
+                .roles
+                .read()
+                .map_err(|e| Error::Storage(format!("Failed to acquire read lock: {}", e)))?;
+            Ok(roles.get(name).cloned())
         }
 
         fn role_exists(&self, name: &str) -> Result<bool> {
-            Ok(self.roles.read().unwrap().contains_key(name))
+            let roles = self
+                .roles
+                .read()
+                .map_err(|e| Error::Storage(format!("Failed to acquire read lock: {}", e)))?;
+            Ok(roles.contains_key(name))
         }
 
         fn delete_role(&mut self, name: &str) -> Result<bool> {
-            let removed = self.roles.write().unwrap().remove(name).is_some();
+            let removed = self
+                .roles
+                .write()
+                .map_err(|e| Error::Storage(format!("Failed to acquire write lock: {}", e)))?
+                .remove(name)
+                .is_some();
             if removed {
                 self.save_to_disk()?;
             }
@@ -189,12 +218,19 @@ pub mod file_storage {
         }
 
         fn list_roles(&self) -> Result<Vec<String>> {
-            Ok(self.roles.read().unwrap().keys().cloned().collect())
+            let roles = self
+                .roles
+                .read()
+                .map_err(|e| Error::Storage(format!("Failed to acquire read lock: {}", e)))?;
+            Ok(roles.keys().cloned().collect())
         }
 
         fn update_role(&mut self, role: Role) -> Result<()> {
             let name = role.name().to_string();
-            self.roles.write().unwrap().insert(name, role);
+            self.roles
+                .write()
+                .map_err(|e| Error::Storage(format!("Failed to acquire write lock: {}", e)))?
+                .insert(name, role);
             self.save_to_disk()
         }
     }
@@ -318,25 +354,46 @@ mod tests {
         let role = Role::new("test-role").add_permission(Permission::new("read", "documents"));
 
         // Store role
-        storage.store_role(role.clone()).unwrap();
+        storage
+            .store_role(role.clone())
+            .expect("Failed to store role");
         assert_eq!(storage.role_count(), 1);
 
         // Check existence
-        assert!(storage.role_exists("test-role").unwrap());
-        assert!(!storage.role_exists("non-existent").unwrap());
+        assert!(
+            storage
+                .role_exists("test-role")
+                .expect("Failed to check role existence")
+        );
+        assert!(
+            !storage
+                .role_exists("non-existent")
+                .expect("Failed to check role existence")
+        );
 
         // Get role
-        let retrieved = storage.get_role("test-role").unwrap().unwrap();
+        let retrieved = storage
+            .get_role("test-role")
+            .expect("Failed to get role")
+            .expect("Role should exist");
         assert_eq!(retrieved.name(), "test-role");
 
         // List roles
-        let roles = storage.list_roles().unwrap();
+        let roles = storage.list_roles().expect("Failed to list roles");
         assert_eq!(roles.len(), 1);
         assert!(roles.contains(&"test-role".to_string()));
 
         // Delete role
-        assert!(storage.delete_role("test-role").unwrap());
-        assert!(!storage.role_exists("test-role").unwrap());
+        assert!(
+            storage
+                .delete_role("test-role")
+                .expect("Failed to delete role")
+        );
+        assert!(
+            !storage
+                .role_exists("test-role")
+                .expect("Failed to check role existence")
+        );
         assert_eq!(storage.role_count(), 0);
     }
 
@@ -352,13 +409,16 @@ mod tests {
         let _ = std::fs::remove_file(&storage_path);
 
         {
-            let mut storage = FileStorage::new(&storage_path).unwrap();
+            let mut storage =
+                FileStorage::new(&storage_path).expect("Failed to create file storage");
 
             let role =
                 Role::new("file-test-role").add_permission(Permission::new("read", "documents"));
 
             // Store role
-            storage.store_role(role.clone()).unwrap();
+            storage
+                .store_role(role.clone())
+                .expect("Failed to store role");
             assert_eq!(storage.role_count(), 1);
 
             // Verify file was created
@@ -367,10 +427,13 @@ mod tests {
 
         // Create new storage instance to test persistence
         {
-            let storage = FileStorage::new(&storage_path).unwrap();
+            let storage = FileStorage::new(&storage_path).expect("Failed to create file storage");
             assert_eq!(storage.role_count(), 1);
 
-            let retrieved = storage.get_role("file-test-role").unwrap().unwrap();
+            let retrieved = storage
+                .get_role("file-test-role")
+                .expect("Failed to get role")
+                .expect("Role should exist");
             assert_eq!(retrieved.name(), "file-test-role");
         }
 
@@ -388,14 +451,19 @@ mod tests {
         let role = Role::new("composite-test").add_permission(Permission::new("read", "documents"));
 
         // Store in both
-        storage.store_role(role.clone()).unwrap();
+        storage
+            .store_role(role.clone())
+            .expect("Failed to store role");
 
         // Should be able to retrieve
-        let retrieved = storage.get_role("composite-test").unwrap().unwrap();
+        let retrieved = storage
+            .get_role("composite-test")
+            .expect("Failed to get role")
+            .expect("Role should exist");
         assert_eq!(retrieved.name(), "composite-test");
 
         // Should appear in list
-        let roles = storage.list_roles().unwrap();
+        let roles = storage.list_roles().expect("Failed to list roles");
         assert!(roles.contains(&"composite-test".to_string()));
     }
 }

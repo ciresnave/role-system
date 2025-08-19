@@ -1,8 +1,8 @@
 //! # Axum Middleware for Role System
-//! 
+//!
 //! This example demonstrates how to create reusable middleware and extractors
 //! for Axum that automatically handle role-based authorization.
-//! 
+//!
 //! ## Features
 //! - Custom extractors for authenticated users
 //! - Layer-based middleware
@@ -11,19 +11,16 @@
 //! - Route-specific authorization
 
 use axum::{
+    Json, Router,
     extract::{FromRequestParts, Path, Query, State},
-    http::{request::Parts, StatusCode, HeaderMap},
+    http::{HeaderMap, StatusCode, request::Parts},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
-use role_system::{RoleSystem, Role, Permission, Subject, Resource};
+use role_system::{Permission, Resource, Role, RoleSystem, Subject};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
@@ -146,7 +143,7 @@ pub async fn auth_middleware(
     // Log the request
     let method = request.method().clone();
     let uri = request.uri().clone();
-    
+
     println!("🔍 {} {}", method, uri);
 
     // Check if this is a protected route
@@ -174,12 +171,14 @@ pub async fn require_role_middleware(
     AuthenticatedUser,
     axum::extract::Request,
     Next,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, StatusCode>> + Send>> + Clone {
+)
+    -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, StatusCode>> + Send>>
++ Clone {
     let required_role = required_role.to_string();
-    
-    move |State(state): State<AppState>, 
+
+    move |State(state): State<AppState>,
           user: AuthenticatedUser,
-          request: axum::extract::Request, 
+          request: axum::extract::Request,
           next: Next| {
         let required_role = required_role.clone();
         Box::pin(async move {
@@ -263,7 +262,8 @@ async fn create_document_handler(
             "title": payload.title,
             "content": payload.content
         }
-    })).into()
+    }))
+    .into()
 }
 
 /// Custom permission check in handler
@@ -272,18 +272,14 @@ async fn custom_permission_handler(
     user: AuthenticatedUser,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let resource_type = params
-        .get("resource")
-        .ok_or(StatusCode::BAD_REQUEST)?;
+    let resource_type = params.get("resource").ok_or(StatusCode::BAD_REQUEST)?;
 
-    let action = params
-        .get("action")
-        .ok_or(StatusCode::BAD_REQUEST)?;
+    let action = params.get("action").ok_or(StatusCode::BAD_REQUEST)?;
 
     // Custom permission check with context
     let subject = Subject::user(&user.user_id);
     let resource = Resource::new("dynamic", resource_type);
-    
+
     let mut context = HashMap::new();
     context.insert("request_origin".to_string(), "api".to_string());
     context.insert("user_agent".to_string(), "axum-client".to_string());
@@ -338,6 +334,16 @@ impl IntoResponse for ErrorResponse {
 // JWT Helper (Mock Implementation)
 // =============================================================================
 
+// ⚠️ SECURITY WARNING: Mock JWT decoder - DO NOT USE IN PRODUCTION! ⚠️
+// This is a demonstration-only implementation that accepts hardcoded tokens.
+// In production applications, you MUST use proper JWT validation with:
+// - The `jsonwebtoken` crate or similar secure library
+// - Proper cryptographic signature verification
+// - Token expiration checking
+// - Issuer and audience validation
+// - Secure secret key management
+// Using this mock implementation in production exposes your application to
+// serious security vulnerabilities including authentication bypass.
 fn decode_jwt(token: &str) -> Result<Claims, Box<dyn std::error::Error>> {
     // Mock JWT decoder - in production use `jsonwebtoken` crate
     match token {
@@ -370,7 +376,9 @@ async fn main() {
     tracing_subscriber::init();
 
     // Setup role system
-    let role_system = setup_role_system().await.expect("Failed to setup role system");
+    let role_system = setup_role_system()
+        .await
+        .expect("Failed to setup role system");
 
     // Create app state
     let state = AppState {
@@ -382,19 +390,20 @@ async fn main() {
         // Public routes
         .route("/", get(public_handler))
         .route("/public", get(public_handler))
-        
         // API routes with different protection levels
         .route("/api/protected", get(protected_handler))
         .route("/api/admin", get(admin_handler))
         .route("/api/documents/:id", get(read_document_handler))
         .route("/api/documents", post(create_document_handler))
         .route("/api/custom-check", get(custom_permission_handler))
-        
         // Add middleware stack
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    auth_middleware,
+                )),
         )
         .with_state(state);
 
@@ -417,7 +426,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .unwrap();
-    
+
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -430,8 +439,7 @@ async fn setup_role_system() -> Result<RoleSystem, Box<dyn std::error::Error>> {
     let admin_perm = Permission::new("admin", "*");
 
     // Create roles
-    let user = Role::new("user")
-        .add_permission(Permission::new("access", "api"));
+    let user = Role::new("user").add_permission(Permission::new("access", "api"));
 
     let editor = Role::new("editor")
         .add_permission(Permission::new("access", "api"))
@@ -442,8 +450,7 @@ async fn setup_role_system() -> Result<RoleSystem, Box<dyn std::error::Error>> {
         .add_permission(Permission::new("access", "api"))
         .add_permission(admin_perm.clone());
 
-    let super_admin = Role::new("super_admin")
-        .add_permission(Permission::super_admin());
+    let super_admin = Role::new("super_admin").add_permission(Permission::super_admin());
 
     // Register roles
     role_system.register_role(user)?;

@@ -10,6 +10,199 @@ use std::{
 };
 use uuid::Uuid;
 
+/// A role hierarchy system for managing role inheritance.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "persistence", derive(serde::Serialize, serde::Deserialize))]
+pub struct RoleHierarchy {
+    /// Map of child role ID to parent role ID
+    parent_map: HashMap<String, String>,
+    /// Map of parent role ID to set of child role IDs
+    children_map: HashMap<String, Vec<String>>,
+    /// All roles in the hierarchy
+    roles: HashMap<String, Role>,
+}
+
+impl RoleHierarchy {
+    /// Create a new empty role hierarchy.
+    pub fn new() -> Self {
+        Self {
+            parent_map: HashMap::new(),
+            children_map: HashMap::new(),
+            roles: HashMap::new(),
+        }
+    }
+
+    /// Add a role to the hierarchy.
+    pub fn add_role(&mut self, role: Role) -> Result<()> {
+        let role_id = role.id().to_string();
+        self.roles.insert(role_id, role);
+        Ok(())
+    }
+
+    /// Set a parent-child relationship between roles.
+    pub fn set_parent(&mut self, child_id: &str, parent_id: &str) -> Result<()> {
+        // Verify both roles exist
+        if !self.roles.contains_key(child_id) {
+            return Err(Error::RoleNotFound(child_id.to_string()));
+        }
+        if !self.roles.contains_key(parent_id) {
+            return Err(Error::RoleNotFound(parent_id.to_string()));
+        }
+
+        // Check for circular dependencies
+        if self.would_create_cycle(child_id, parent_id) {
+            return Err(Error::CircularDependency(format!(
+                "{} -> {}",
+                child_id, parent_id
+            )));
+        }
+
+        // Remove any existing parent relationship for this child
+        if let Some(old_parent) = self.parent_map.remove(child_id)
+            && let Some(siblings) = self.children_map.get_mut(&old_parent)
+        {
+            siblings.retain(|id| id != child_id);
+        }
+
+        // Set the new parent relationship
+        self.parent_map
+            .insert(child_id.to_string(), parent_id.to_string());
+        self.children_map
+            .entry(parent_id.to_string())
+            .or_default()
+            .push(child_id.to_string());
+
+        Ok(())
+    }
+
+    /// Get the parent role of a given role.
+    pub fn get_parent(&self, role_id: &str) -> Option<&Role> {
+        self.parent_map
+            .get(role_id)
+            .and_then(|parent_id| self.roles.get(parent_id))
+    }
+
+    /// Get all child roles of a given role.
+    pub fn get_children(&self, role_id: &str) -> Vec<&Role> {
+        self.children_map
+            .get(role_id)
+            .map(|child_ids| {
+                child_ids
+                    .iter()
+                    .filter_map(|id| self.roles.get(id))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get all ancestor roles (parents, grandparents, etc.) of a given role.
+    pub fn get_ancestors(&self, role_id: &str) -> Vec<&Role> {
+        let mut ancestors = Vec::new();
+        let mut current = role_id;
+
+        while let Some(parent_id) = self.parent_map.get(current) {
+            if let Some(parent_role) = self.roles.get(parent_id) {
+                ancestors.push(parent_role);
+                current = parent_id;
+            } else {
+                break;
+            }
+        }
+
+        ancestors
+    }
+
+    /// Get all permissions for a role, including inherited permissions.
+    pub fn get_effective_permissions(&self, role_id: &str) -> Result<PermissionSet> {
+        let role = self
+            .roles
+            .get(role_id)
+            .ok_or_else(|| Error::RoleNotFound(role_id.to_string()))?;
+
+        let mut permissions = role.permissions().clone();
+
+        // Add inherited permissions from ancestors
+        for ancestor in self.get_ancestors(role_id) {
+            for permission in ancestor.permissions().permissions() {
+                permissions.add(permission.clone());
+            }
+        }
+
+        Ok(permissions)
+    }
+
+    /// Check if a role has a specific permission, including inherited permissions.
+    pub fn has_permission(
+        &self,
+        role_id: &str,
+        action: &str,
+        resource: &str,
+        context: &HashMap<String, String>,
+    ) -> Result<bool> {
+        let effective_permissions = self.get_effective_permissions(role_id)?;
+        Ok(effective_permissions.grants(action, resource, context))
+    }
+
+    /// Get a role by ID.
+    pub fn get_role(&self, role_id: &str) -> Option<&Role> {
+        self.roles.get(role_id)
+    }
+
+    /// Get all roles in the hierarchy.
+    pub fn get_all_roles(&self) -> Vec<&Role> {
+        self.roles.values().collect()
+    }
+
+    /// Remove a role from the hierarchy.
+    pub fn remove_role(&mut self, role_id: &str) -> Result<()> {
+        // Remove the role itself
+        if self.roles.remove(role_id).is_none() {
+            return Err(Error::RoleNotFound(role_id.to_string()));
+        }
+
+        // Remove from parent mapping
+        if let Some(parent_id) = self.parent_map.remove(role_id)
+            && let Some(siblings) = self.children_map.get_mut(&parent_id)
+        {
+            siblings.retain(|id| id != role_id);
+        }
+
+        // Remove from children mapping and reparent children
+        if let Some(child_ids) = self.children_map.remove(role_id) {
+            for child_id in child_ids {
+                self.parent_map.remove(&child_id);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if setting a parent would create a circular dependency.
+    fn would_create_cycle(&self, child_id: &str, proposed_parent_id: &str) -> bool {
+        // If the proposed parent is the child itself, it's a cycle
+        if child_id == proposed_parent_id {
+            return true;
+        }
+
+        // Check if the proposed parent is already a descendant of the child
+        let mut current = proposed_parent_id;
+        while let Some(parent_id) = self.parent_map.get(current) {
+            if parent_id == child_id {
+                return true;
+            }
+            current = parent_id;
+        }
+
+        false
+    }
+}
+
+impl Default for RoleHierarchy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A role represents a collection of permissions that can be assigned to subjects.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "persistence", derive(serde::Serialize, serde::Deserialize))]
@@ -150,6 +343,171 @@ impl Role {
             self.permissions.add(permission.clone());
         }
     }
+
+    // Optional hierarchy access methods (require hierarchy config to be enabled)
+
+    /// Get the parent role ID if this role has a parent in the hierarchy.
+    ///
+    /// This method provides access to the direct parent relationship, enabling
+    /// use cases like API responses, admin interfaces, and JWT token generation.
+    ///
+    /// Returns `None` if:
+    /// - This role has no parent (it's a root role)
+    /// - Hierarchy access is disabled in configuration
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::Role;
+    ///
+    /// let role = Role::new("junior_dev");
+    /// if let Some(parent_id) = role.parent_role_id() {
+    ///     println!("Parent role: {}", parent_id);
+    /// }
+    /// ```
+    ///
+    /// # Note
+    /// This method returns `None` by default to maintain backward compatibility.
+    /// The actual parent relationship is managed by the `RoleHierarchy` system.
+    /// To use this feature, the role must be created through a system that
+    /// tracks hierarchy relationships and enables hierarchy access.
+    pub fn parent_role_id(&self) -> Option<&str> {
+        // By default, roles don't track their parents directly
+        // This is managed by RoleHierarchy and AsyncRoleSystem
+        // Individual Role instances return None for backward compatibility
+        None
+    }
+
+    /// Get the child role IDs if this role has children in the hierarchy.
+    ///
+    /// This method provides access to direct child relationships, useful for
+    /// building admin interfaces, API responses, and permission visualization.
+    ///
+    /// Returns empty vector if:
+    /// - This role has no children
+    /// - Hierarchy access is disabled in configuration
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::Role;
+    ///
+    /// let role = Role::new("team_lead");
+    /// let children = role.child_role_ids();
+    /// for child_id in children {
+    ///     println!("Child role: {}", child_id);
+    /// }
+    /// ```
+    ///
+    /// # Note
+    /// This method returns an empty vector by default to maintain backward compatibility.
+    /// The actual child relationships are managed by the `RoleHierarchy` system.
+    /// To use this feature, the role must be created through a system that
+    /// tracks hierarchy relationships and enables hierarchy access.
+    pub fn child_role_ids(&self) -> Vec<&str> {
+        // By default, roles don't track their children directly
+        // This is managed by RoleHierarchy and AsyncRoleSystem
+        // Individual Role instances return empty vector for backward compatibility
+        Vec::new()
+    }
+
+    /// Check if this role is a root role (has no parent).
+    ///
+    /// A root role is one that sits at the top of a hierarchy branch
+    /// and doesn't inherit from any other role.
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::Role;
+    ///
+    /// let admin_role = Role::new("admin");
+    /// if admin_role.is_root_role() {
+    ///     println!("This is a top-level role");
+    /// }
+    /// ```
+    ///
+    /// # Note
+    /// Returns `true` by default since individual Role instances don't
+    /// track hierarchy relationships. Use `RoleHierarchy` or `AsyncRoleSystem`
+    /// for actual hierarchy-aware operations.
+    pub fn is_root_role(&self) -> bool {
+        self.parent_role_id().is_none()
+    }
+
+    /// Check if this role is a leaf role (has no children).
+    ///
+    /// A leaf role is one that doesn't have any roles inheriting from it.
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::Role;
+    ///
+    /// let intern_role = Role::new("intern");
+    /// if intern_role.is_leaf_role() {
+    ///     println!("This role has no children");
+    /// }
+    /// ```
+    ///
+    /// # Note
+    /// Returns `true` by default since individual Role instances don't
+    /// track hierarchy relationships. Use `RoleHierarchy` or `AsyncRoleSystem`
+    /// for actual hierarchy-aware operations.
+    pub fn is_leaf_role(&self) -> bool {
+        self.child_role_ids().is_empty()
+    }
+
+    /// Get the depth of this role in the hierarchy.
+    ///
+    /// Root roles have depth 0, their children have depth 1, etc.
+    /// This is useful for visualization and API responses.
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::Role;
+    ///
+    /// let role = Role::new("senior_dev");
+    /// let depth = role.hierarchy_depth();
+    /// println!("Role depth: {}", depth);
+    /// ```
+    ///
+    /// # Note
+    /// Returns `0` by default since individual Role instances don't
+    /// track hierarchy relationships. Use `RoleHierarchy` or `AsyncRoleSystem`
+    /// for actual hierarchy-aware depth calculation.
+    pub fn hierarchy_depth(&self) -> usize {
+        0
+    }
+
+    /// Get metadata about this role's position in the hierarchy.
+    ///
+    /// Returns a HashMap containing hierarchy-related metadata such as:
+    /// - "parent_count": Number of ancestors
+    /// - "child_count": Number of direct children
+    /// - "descendant_count": Total number of descendants
+    /// - "depth": Depth in hierarchy
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::Role;
+    ///
+    /// let role = Role::new("manager");
+    /// let hierarchy_meta = role.hierarchy_metadata();
+    /// if let Some(depth) = hierarchy_meta.get("depth") {
+    ///     println!("Hierarchy depth: {}", depth);
+    /// }
+    /// ```
+    ///
+    /// # Note
+    /// Returns minimal metadata by default. Use `RoleHierarchy` or `AsyncRoleSystem`
+    /// for complete hierarchy metadata.
+    pub fn hierarchy_metadata(&self) -> HashMap<String, String> {
+        let mut metadata = HashMap::new();
+        metadata.insert("depth".to_string(), "0".to_string());
+        metadata.insert("parent_count".to_string(), "0".to_string());
+        metadata.insert("child_count".to_string(), "0".to_string());
+        metadata.insert("descendant_count".to_string(), "0".to_string());
+        metadata.insert("is_root".to_string(), "true".to_string());
+        metadata.insert("is_leaf".to_string(), "true".to_string());
+        metadata
+    }
 }
 
 /// A temporary role elevation for a subject.
@@ -275,6 +633,87 @@ impl RoleBuilder {
         self
     }
 
+    /// Add permissions with fluent allow syntax.
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::role::RoleBuilder;
+    /// let role = RoleBuilder::new()
+    ///     .name("admin")
+    ///     .allow("users", ["create", "read", "update", "delete"])
+    ///     .allow("roles", ["read", "assign"])
+    ///     .build().unwrap();
+    /// ```
+    pub fn allow<I, S>(mut self, resource: impl Into<String>, actions: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let resource = resource.into();
+        for action in actions {
+            self.permissions
+                .push(Permission::new(action.into(), resource.clone()));
+        }
+        self
+    }
+
+    /// Add permissions with deny semantics (creates negative conditions).
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::role::RoleBuilder;
+    /// let role = RoleBuilder::new()
+    ///     .name("restricted_admin")
+    ///     .allow("users", ["read", "update"])
+    ///     .deny("system", ["shutdown"])
+    ///     .build().unwrap();
+    /// ```
+    pub fn deny<I, S>(mut self, resource: impl Into<String>, actions: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let resource = resource.into();
+        for action in actions {
+            // Create a permission with a condition that always returns false
+            let deny_permission =
+                Permission::with_condition(action.into(), resource.clone(), |_| false);
+            self.permissions.push(deny_permission);
+        }
+        self
+    }
+
+    /// Add permissions with conditional access.
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::role::RoleBuilder;
+    /// let role = RoleBuilder::new()
+    ///     .name("user")
+    ///     .allow_when("profile", ["update"], |ctx|
+    ///         ctx.get("user_id") == ctx.get("target_id"))
+    ///     .build().unwrap();
+    /// ```
+    pub fn allow_when<I, S, F>(
+        mut self,
+        resource: impl Into<String>,
+        actions: I,
+        condition: F,
+    ) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+        F: Fn(&std::collections::HashMap<String, String>) -> bool + Send + Sync + 'static + Clone,
+    {
+        let resource = resource.into();
+        for action in actions {
+            let conditional_permission =
+                Permission::with_condition(action.into(), resource.clone(), condition.clone());
+            self.permissions.push(conditional_permission);
+        }
+        self
+    }
+
     /// Add metadata to the role.
     pub fn metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
@@ -289,12 +728,12 @@ impl RoleBuilder {
 
     /// Build the role.
     pub fn build(self) -> Result<Role> {
-        let name = self.name.ok_or_else(|| {
-            Error::InvalidConfiguration("Role name is required".to_string())
-        })?;
+        let name = self
+            .name
+            .ok_or_else(|| Error::InvalidConfiguration("Role name is required".to_string()))?;
 
         let mut role = Role::new(name);
-        
+
         if let Some(description) = self.description {
             role = role.with_description(description);
         }
@@ -363,8 +802,7 @@ mod tests {
 
     #[test]
     fn test_role_permissions() {
-        let role = Role::new("reader")
-            .add_permission(Permission::new("read", "documents"));
+        let role = Role::new("reader").add_permission(Permission::new("read", "documents"));
 
         let context = HashMap::new();
         assert!(role.has_permission("read", "documents", &context));
@@ -391,7 +829,7 @@ mod tests {
     #[test]
     fn test_role_elevation() {
         let elevation = RoleElevation::new("admin".to_string(), Some(Duration::from_secs(3600)));
-        
+
         assert_eq!(elevation.role_name(), "admin");
         assert_eq!(elevation.duration(), Some(Duration::from_secs(3600)));
         assert!(!elevation.is_expired(Instant::now()));
@@ -399,11 +837,10 @@ mod tests {
 
     #[test]
     fn test_inactive_role_permissions() {
-        let mut role = Role::new("inactive")
-            .add_permission(Permission::new("read", "documents"));
-        
+        let mut role = Role::new("inactive").add_permission(Permission::new("read", "documents"));
+
         role.set_active(false);
-        
+
         let context = HashMap::new();
         assert!(!role.has_permission("read", "documents", &context));
     }

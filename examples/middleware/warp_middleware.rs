@@ -1,8 +1,8 @@
 //! # Warp Middleware for Role System
-//! 
+//!
 //! This example demonstrates how to create reusable filters and middleware
 //! for Warp that automatically handle role-based authorization.
-//! 
+//!
 //! ## Features
 //! - Filter-based authorization
 //! - JWT token extraction
@@ -10,14 +10,10 @@
 //! - Type-safe request handling
 //! - Automatic error responses
 
-use warp::{Filter, Rejection, Reply, hyper::StatusCode};
-use role_system::{RoleSystem, Role, Permission, Subject, Resource};
+use role_system::{Permission, Resource, Role, RoleSystem, Subject};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    convert::Infallible,
-    sync::Arc,
-};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
+use warp::{Filter, Rejection, Reply, hyper::StatusCode};
 
 // =============================================================================
 // App State and Types
@@ -66,25 +62,24 @@ impl warp::reject::Reject for AuthError {}
 
 /// Extract JWT token from Authorization header
 fn with_auth() -> impl Filter<Extract = (AuthenticatedUser,), Error = Rejection> + Clone {
-    warp::header::optional::<String>("authorization")
-        .and_then(|auth_header: Option<String>| async move {
+    warp::header::optional::<String>("authorization").and_then(
+        |auth_header: Option<String>| async move {
             match auth_header {
-                Some(header) => {
-                    match decode_jwt(&header) {
-                        Ok(claims) => Ok(AuthenticatedUser {
-                            user_id: claims.sub,
-                            roles: claims.roles,
-                        }),
-                        Err(_) => Err(warp::reject::custom(AuthError {
-                            kind: AuthErrorKind::InvalidToken,
-                        })),
-                    }
-                }
+                Some(header) => match decode_jwt(&header) {
+                    Ok(claims) => Ok(AuthenticatedUser {
+                        user_id: claims.sub,
+                        roles: claims.roles,
+                    }),
+                    Err(_) => Err(warp::reject::custom(AuthError {
+                        kind: AuthErrorKind::InvalidToken,
+                    })),
+                },
                 None => Err(warp::reject::custom(AuthError {
                     kind: AuthErrorKind::MissingToken,
                 })),
             }
-        })
+        },
+    )
 }
 
 /// Filter that requires specific permission
@@ -92,9 +87,8 @@ fn with_permission(
     action: &'static str,
     resource_type: &'static str,
 ) -> impl Filter<Extract = (AuthenticatedUser,), Error = Rejection> + Clone {
-    with_auth()
-        .and(with_role_system())
-        .and_then(move |user: AuthenticatedUser, role_system: Arc<RoleSystem>| async move {
+    with_auth().and(with_role_system()).and_then(
+        move |user: AuthenticatedUser, role_system: Arc<RoleSystem>| async move {
             let subject = Subject::user(&user.user_id);
             let resource = Resource::new("api", resource_type);
 
@@ -107,7 +101,8 @@ fn with_permission(
                     kind: AuthErrorKind::SystemError,
                 })),
             }
-        })
+        },
+    )
 }
 
 /// Filter that provides role system from app state
@@ -125,46 +120,64 @@ fn admin_only() -> impl Filter<Extract = (AuthenticatedUser,), Error = Rejection
 }
 
 /// Read permission filter
-fn can_read(resource_type: &'static str) -> impl Filter<Extract = (AuthenticatedUser,), Error = Rejection> + Clone {
+fn can_read(
+    resource_type: &'static str,
+) -> impl Filter<Extract = (AuthenticatedUser,), Error = Rejection> + Clone {
     with_permission("read", resource_type)
 }
 
 /// Write permission filter
-fn can_write(resource_type: &'static str) -> impl Filter<Extract = (AuthenticatedUser,), Error = Rejection> + Clone {
+fn can_write(
+    resource_type: &'static str,
+) -> impl Filter<Extract = (AuthenticatedUser,), Error = Rejection> + Clone {
     with_permission("write", resource_type)
 }
 
 /// Custom permission filter with context
-fn with_custom_permission() -> impl Filter<Extract = (AuthenticatedUser,), Error = Rejection> + Clone {
+fn with_custom_permission() -> impl Filter<Extract = (AuthenticatedUser,), Error = Rejection> + Clone
+{
     with_auth()
         .and(with_role_system())
         .and(warp::query::<HashMap<String, String>>())
-        .and_then(|user: AuthenticatedUser, role_system: Arc<RoleSystem>, params: HashMap<String, String>| async move {
-            let action = params.get("action").ok_or_else(|| warp::reject::custom(AuthError {
-                kind: AuthErrorKind::SystemError,
-            }))?;
-            
-            let resource_type = params.get("resource").ok_or_else(|| warp::reject::custom(AuthError {
-                kind: AuthErrorKind::SystemError,
-            }))?;
+        .and_then(
+            |user: AuthenticatedUser,
+             role_system: Arc<RoleSystem>,
+             params: HashMap<String, String>| async move {
+                let action = params.get("action").ok_or_else(|| {
+                    warp::reject::custom(AuthError {
+                        kind: AuthErrorKind::SystemError,
+                    })
+                })?;
 
-            let subject = Subject::user(&user.user_id);
-            let resource = Resource::new("dynamic", resource_type);
-            
-            let mut context = HashMap::new();
-            context.insert("request_origin".to_string(), "warp-api".to_string());
-            context.insert("timestamp".to_string(), chrono::Utc::now().timestamp().to_string());
+                let resource_type = params.get("resource").ok_or_else(|| {
+                    warp::reject::custom(AuthError {
+                        kind: AuthErrorKind::SystemError,
+                    })
+                })?;
 
-            match role_system.check_permission_with_context(&subject, action, &resource, &context) {
-                Ok(true) => Ok(user),
-                Ok(false) => Err(warp::reject::custom(AuthError {
-                    kind: AuthErrorKind::InsufficientPermissions,
-                })),
-                Err(_) => Err(warp::reject::custom(AuthError {
-                    kind: AuthErrorKind::SystemError,
-                })),
-            }
-        })
+                let subject = Subject::user(&user.user_id);
+                let resource = Resource::new("dynamic", resource_type);
+
+                let mut context = HashMap::new();
+                context.insert("request_origin".to_string(), "warp-api".to_string());
+                context.insert(
+                    "timestamp".to_string(),
+                    chrono::Utc::now().timestamp().to_string(),
+                );
+
+                match role_system
+                    .check_permission_with_context(&subject, action, &resource, &context)
+                {
+                    Ok(true) => Ok(user),
+                    Ok(false) => Err(warp::reject::custom(AuthError {
+                        kind: AuthErrorKind::InsufficientPermissions,
+                    })),
+                    Err(_) => Err(warp::reject::custom(AuthError {
+                        kind: AuthErrorKind::SystemError,
+                    })),
+                }
+            },
+        )
 }
 
 // =============================================================================
@@ -211,7 +224,7 @@ async fn public_handler() -> Result<impl Reply, Infallible> {
         "message": "This is a public endpoint",
         "timestamp": chrono::Utc::now().to_rfc3339()
     }));
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -223,7 +236,7 @@ async fn protected_handler(user: AuthenticatedUser) -> Result<impl Reply, Infall
             "roles": user.roles
         }
     }));
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -236,7 +249,7 @@ async fn admin_handler(admin: AuthenticatedUser) -> Result<impl Reply, Infallibl
             "user_count": 1337
         }
     }));
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -253,7 +266,7 @@ async fn read_document_handler(
             "content": "This is a sample document..."
         }
     }));
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -270,7 +283,7 @@ async fn create_document_handler(
             "content": doc_request.content
         }
     }));
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -287,7 +300,7 @@ async fn custom_permission_handler(
         "action": action,
         "resource": resource
     }));
-    
+
     Ok(warp::reply::json(&response))
 }
 
@@ -318,10 +331,16 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
             ),
         }
     } else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
-        (StatusCode::METHOD_NOT_ALLOWED, "Method Not Allowed".to_string())
+        (
+            StatusCode::METHOD_NOT_ALLOWED,
+            "Method Not Allowed".to_string(),
+        )
     } else {
         eprintln!("unhandled rejection: {:?}", err);
-        (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error".to_string())
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error".to_string(),
+        )
     };
 
     let response = ApiResponse::<()>::error(message);
@@ -332,6 +351,16 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
 // JWT Helper (Mock Implementation)
 // =============================================================================
 
+// ⚠️ SECURITY WARNING: Mock JWT decoder - DO NOT USE IN PRODUCTION! ⚠️
+// This is a demonstration-only implementation that accepts hardcoded tokens.
+// In production applications, you MUST use proper JWT validation with:
+// - The `jsonwebtoken` crate or similar secure library
+// - Proper cryptographic signature verification
+// - Token expiration checking
+// - Issuer and audience validation
+// - Secure secret key management
+// Using this mock implementation in production exposes your application to
+// serious security vulnerabilities including authentication bypass.
 fn decode_jwt(token: &str) -> Result<Claims, Box<dyn std::error::Error>> {
     // Mock JWT decoder - in production use `jsonwebtoken` crate
     match token {
@@ -379,19 +408,17 @@ async fn main() {
     println!("   Authorization: Bearer warp-user    - Regular user");
 
     // Build routes
-    let welcome = warp::get()
-        .and(warp::path::end())
-        .map(|| {
-            warp::reply::json(&serde_json::json!({
-                "message": "Welcome to Warp Role System Example",
-                "endpoints": {
-                    "public": "/public",
-                    "protected": "/api/protected",
-                    "admin": "/api/admin",
-                    "documents": "/api/documents"
-                }
-            }))
-        });
+    let welcome = warp::get().and(warp::path::end()).map(|| {
+        warp::reply::json(&serde_json::json!({
+            "message": "Welcome to Warp Role System Example",
+            "endpoints": {
+                "public": "/public",
+                "protected": "/api/protected",
+                "admin": "/api/admin",
+                "documents": "/api/documents"
+            }
+        }))
+    });
 
     let public = warp::get()
         .and(warp::path("public"))
@@ -437,12 +464,14 @@ async fn main() {
         .or(read_document)
         .or(create_document)
         .or(custom_check)
-        .with(warp::cors().allow_any_origin().allow_headers(vec!["authorization", "content-type"]))
+        .with(
+            warp::cors()
+                .allow_any_origin()
+                .allow_headers(vec!["authorization", "content-type"]),
+        )
         .recover(handle_rejection);
 
-    warp::serve(routes)
-        .run(([127, 0, 0, 1], 3030))
-        .await;
+    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 }
 
 fn setup_role_system() -> Result<Arc<RoleSystem>, Box<dyn std::error::Error>> {
@@ -454,8 +483,7 @@ fn setup_role_system() -> Result<Arc<RoleSystem>, Box<dyn std::error::Error>> {
     let admin_perm = Permission::new("admin", "*");
 
     // Create roles
-    let user = Role::new("user")
-        .add_permission(Permission::new("access", "api"));
+    let user = Role::new("user").add_permission(Permission::new("access", "api"));
 
     let editor = Role::new("editor")
         .add_permission(Permission::new("access", "api"))
@@ -466,8 +494,7 @@ fn setup_role_system() -> Result<Arc<RoleSystem>, Box<dyn std::error::Error>> {
         .add_permission(Permission::new("access", "api"))
         .add_permission(admin_perm.clone());
 
-    let super_admin = Role::new("super_admin")
-        .add_permission(Permission::super_admin());
+    let super_admin = Role::new("super_admin").add_permission(Permission::super_admin());
 
     // Register roles
     role_system.register_role(user)?;

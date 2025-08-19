@@ -11,13 +11,7 @@ use crate::{
 use crate::error::Error;
 
 #[cfg(feature = "database")]
-use async_trait::async_trait;
-#[cfg(feature = "database")]
-use serde_json;
-#[cfg(feature = "database")]
 use sqlx::{PgPool, Row};
-#[cfg(feature = "database")]
-use std::collections::HashMap;
 
 #[cfg(feature = "database")]
 /// PostgreSQL storage backend for the role system.
@@ -32,7 +26,7 @@ impl DatabaseStorage {
     pub async fn new(database_url: &str) -> Result<Self> {
         let pool = PgPool::connect(database_url)
             .await
-            .map_err(|e| Error::StorageError(format!("Database connection failed: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Database connection failed: {}", e)))?;
 
         let storage = Self {
             pool,
@@ -49,7 +43,7 @@ impl DatabaseStorage {
     pub async fn new_with_prefix(database_url: &str, table_prefix: String) -> Result<Self> {
         let pool = PgPool::connect(database_url)
             .await
-            .map_err(|e| Error::StorageError(format!("Database connection failed: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Database connection failed: {}", e)))?;
 
         let storage = Self { pool, table_prefix };
 
@@ -131,26 +125,24 @@ impl DatabaseStorage {
         sqlx::query(&create_roles)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to create roles table: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to create roles table: {}", e)))?;
 
         sqlx::query(&create_role_permissions)
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                Error::StorageError(format!("Failed to create role_permissions table: {}", e))
+                Error::Storage(format!("Failed to create role_permissions table: {}", e))
             })?;
 
         sqlx::query(&create_subjects)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to create subjects table: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to create subjects table: {}", e)))?;
 
         sqlx::query(&create_subject_roles)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                Error::StorageError(format!("Failed to create subject_roles table: {}", e))
-            })?;
+            .map_err(|e| Error::Storage(format!("Failed to create subject_roles table: {}", e)))?;
 
         Ok(())
     }
@@ -166,11 +158,13 @@ impl DatabaseStorage {
     }
 
     /// Get the subjects table name.
+    #[allow(dead_code)]
     fn subjects_table(&self) -> String {
         format!("{}subjects", self.table_prefix)
     }
 
     /// Get the subject roles table name.
+    #[allow(dead_code)]
     fn subject_roles_table(&self) -> String {
         format!("{}subject_roles", self.table_prefix)
     }
@@ -185,7 +179,7 @@ impl DatabaseStorage {
             .bind(role_name)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to delete old permissions: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to delete old permissions: {}", e)))?;
 
         // Insert new permissions
         for permission in role.permissions().permissions() {
@@ -201,7 +195,7 @@ impl DatabaseStorage {
                 .bind(permission.instance())
                 .execute(&self.pool)
                 .await
-                .map_err(|e| Error::StorageError(format!("Failed to insert permission: {}", e)))?;
+                .map_err(|e| Error::Storage(format!("Failed to insert permission: {}", e)))?;
         }
 
         Ok(())
@@ -222,7 +216,7 @@ impl DatabaseStorage {
             .bind(role_name)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to load permissions: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to load permissions: {}", e)))?;
 
         let mut permissions = Vec::new();
         for row in rows {
@@ -230,22 +224,20 @@ impl DatabaseStorage {
             let resource_type: String = row.get("resource_type");
             let instance_id: Option<String> = row.get("instance_id");
 
-            let mut permission = crate::permission::Permission::new(action, resource_type);
-            if let Some(instance) = instance_id {
-                permission = permission.with_instance(instance);
-            }
+            let permission = if let Some(instance) = instance_id {
+                crate::permission::Permission::with_instance(action, resource_type, instance)
+            } else {
+                crate::permission::Permission::new(action, resource_type)
+            };
 
             permissions.push(permission);
         }
 
         Ok(permissions)
     }
-}
 
-#[cfg(feature = "database")]
-#[async_trait]
-impl Storage for DatabaseStorage {
-    async fn store_role(&mut self, role: Role) -> Result<()> {
+    /// Store a role in the database (async implementation).
+    pub async fn store_role_async(&mut self, role: Role) -> Result<()> {
         let roles_table = self.roles_table();
 
         // Start a transaction
@@ -253,7 +245,7 @@ impl Storage for DatabaseStorage {
             .pool
             .begin()
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to start transaction: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to start transaction: {}", e)))?;
 
         // Insert or update role
         let upsert_query = format!(
@@ -274,7 +266,7 @@ impl Storage for DatabaseStorage {
             .bind(role.is_active())
             .execute(&mut *tx)
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to store role: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to store role: {}", e)))?;
 
         // Store permissions
         self.store_role_permissions(role.name(), &role).await?;
@@ -282,12 +274,13 @@ impl Storage for DatabaseStorage {
         // Commit transaction
         tx.commit()
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to commit transaction: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(())
     }
 
-    async fn get_role(&self, name: &str) -> Result<Option<Role>> {
+    /// Get a role from the database (async implementation).
+    pub async fn get_role_async(&self, name: &str) -> Result<Option<Role>> {
         let roles_table = self.roles_table();
         let query = format!(
             "SELECT name, description, active FROM {} WHERE name = $1 AND active = true",
@@ -298,7 +291,7 @@ impl Storage for DatabaseStorage {
             .bind(name)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to get role: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to get role: {}", e)))?;
 
         if let Some(row) = row {
             let role_name: String = row.get("name");
@@ -325,12 +318,8 @@ impl Storage for DatabaseStorage {
         }
     }
 
-    async fn update_role(&mut self, role: Role) -> Result<()> {
-        // For database storage, update is the same as store
-        self.store_role(role).await
-    }
-
-    async fn delete_role(&mut self, name: &str) -> Result<bool> {
+    /// Delete a role from the database (async implementation).
+    pub async fn delete_role_async(&mut self, name: &str) -> Result<bool> {
         let roles_table = self.roles_table();
 
         // Soft delete by setting active = false
@@ -343,12 +332,13 @@ impl Storage for DatabaseStorage {
             .bind(name)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to delete role: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to delete role: {}", e)))?;
 
         Ok(result.rows_affected() > 0)
     }
 
-    async fn role_exists(&self, name: &str) -> Result<bool> {
+    /// Check if a role exists in the database (async implementation).
+    pub async fn role_exists_async(&self, name: &str) -> Result<bool> {
         let roles_table = self.roles_table();
         let query = format!(
             "SELECT 1 FROM {} WHERE name = $1 AND active = true LIMIT 1",
@@ -359,12 +349,13 @@ impl Storage for DatabaseStorage {
             .bind(name)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to check role existence: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to check role existence: {}", e)))?;
 
         Ok(row.is_some())
     }
 
-    async fn list_roles(&self) -> Result<Vec<String>> {
+    /// List all roles in the database (async implementation).
+    pub async fn list_roles_async(&self) -> Result<Vec<String>> {
         let roles_table = self.roles_table();
         let query = format!(
             "SELECT name FROM {} WHERE active = true ORDER BY name",
@@ -374,15 +365,70 @@ impl Storage for DatabaseStorage {
         let rows = sqlx::query(&query)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| Error::StorageError(format!("Failed to list roles: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to list roles: {}", e)))?;
 
         let roles: Vec<String> = rows.into_iter().map(|row| row.get("name")).collect();
         Ok(roles)
     }
 
+    /// Get the number of roles in the database (async implementation).
+    pub async fn role_count_async(&self) -> Result<usize> {
+        let roles_table = self.roles_table();
+        let query = format!(
+            "SELECT COUNT(*) as count FROM {} WHERE active = true",
+            roles_table
+        );
+
+        let row = sqlx::query(&query)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to count roles: {}", e)))?;
+
+        let count: i64 = row.get("count");
+        Ok(count as usize)
+    }
+}
+
+#[cfg(feature = "database")]
+impl Storage for DatabaseStorage {
+    fn store_role(&mut self, _role: Role) -> Result<()> {
+        Err(Error::Storage(
+            "Use store_role_async for database storage".to_string(),
+        ))
+    }
+
+    fn get_role(&self, _name: &str) -> Result<Option<Role>> {
+        Err(Error::Storage(
+            "Use get_role_async for database storage".to_string(),
+        ))
+    }
+
+    fn role_exists(&self, _name: &str) -> Result<bool> {
+        Err(Error::Storage(
+            "Use role_exists_async for database storage".to_string(),
+        ))
+    }
+
+    fn delete_role(&mut self, _name: &str) -> Result<bool> {
+        Err(Error::Storage(
+            "Use delete_role_async for database storage".to_string(),
+        ))
+    }
+
+    fn list_roles(&self) -> Result<Vec<String>> {
+        Err(Error::Storage(
+            "Use list_roles_async for database storage".to_string(),
+        ))
+    }
+
+    fn update_role(&mut self, role: Role) -> Result<()> {
+        // For database storage, update is the same as store
+        self.store_role(role)
+    }
+
     fn role_count(&self) -> usize {
-        // For async implementation, this would need to be async too
-        // For now, return 0 as a placeholder
+        // For database storage, this should use the async method
+        // Return 0 as a placeholder since we can't use async here
         0
     }
 }
@@ -423,10 +469,6 @@ pub struct DatabaseStats {
     pub idle_connections: usize,
     pub max_connections: usize,
 }
-
-// Export types when database feature is enabled
-#[cfg(feature = "database")]
-pub use DatabaseStorage;
 
 #[cfg(not(feature = "database"))]
 /// Placeholder when database feature is not enabled.
@@ -470,13 +512,13 @@ mod tests {
             .add_permission(Permission::new("write", "documents"));
 
         // Store role
-        storage.store_role(role.clone()).await.unwrap();
+        storage.store_role_async(role.clone()).await.unwrap();
 
         // Check existence
-        assert!(storage.role_exists("test_role").await.unwrap());
+        assert!(storage.role_exists_async("test_role").await.unwrap());
 
         // Get role
-        let retrieved = storage.get_role("test_role").await.unwrap().unwrap();
+        let retrieved = storage.get_role_async("test_role").await.unwrap().unwrap();
         assert_eq!(retrieved.name(), "test_role");
         assert_eq!(
             retrieved.description(),
@@ -485,12 +527,12 @@ mod tests {
         assert_eq!(retrieved.permissions().permissions().len(), 2);
 
         // List roles
-        let roles = storage.list_roles().await.unwrap();
+        let roles = storage.list_roles_async().await.unwrap();
         assert!(roles.contains(&"test_role".to_string()));
 
         // Delete role
-        assert!(storage.delete_role("test_role").await.unwrap());
-        assert!(!storage.role_exists("test_role").await.unwrap());
+        assert!(storage.delete_role_async("test_role").await.unwrap());
+        assert!(!storage.role_exists_async("test_role").await.unwrap());
     }
 
     #[tokio::test]

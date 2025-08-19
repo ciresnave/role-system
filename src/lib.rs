@@ -95,6 +95,7 @@ pub mod error;
 pub mod fuzz;
 
 pub mod health;
+pub mod hierarchy;
 pub mod macros;
 pub mod metrics;
 pub mod performance;
@@ -118,10 +119,18 @@ pub use crate::{
     auth_context::{AuthenticationContext, JwtContext, SessionContext},
     batch::{BatchConfig, BatchOperations, BatchPermissionCheck, BatchResult, BatchRoleAssignment},
     context_integration::ContextualPermissions,
-    core::{AccessResult, RoleSystem},
+    core::{AccessResult, RoleSystem, RoleSystemConfig},
     error::Error,
+    hierarchy::{
+        HierarchyConfig, HierarchyConfigBuilder, RelationshipType, RoleHierarchyTree, RoleNode,
+        RoleRelationship,
+    },
     permission::Permission,
     resource::Resource,
     role::Role,
+    storage::MemoryStorage,
     subject::Subject,
 };
+
+#[cfg(feature = "async")]
+pub use crate::async_support::AsyncRoleSystem;

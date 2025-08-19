@@ -1,8 +1,8 @@
 //! # Actix Web Middleware for Role System
-//! 
+//!
 //! This example demonstrates how to create reusable middleware for Actix Web
 //! that automatically handles role-based authorization.
-//! 
+//!
 //! ## Features
 //! - Automatic permission checking
 //! - Custom error responses
@@ -11,19 +11,16 @@
 //! - Context-aware permissions
 
 use actix_web::{
-    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    web, App, HttpMessage, HttpResponse, HttpServer, Result, 
-    middleware::Logger,
+    App, HttpMessage, HttpResponse, HttpServer, Result,
+    dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
     http::header::AUTHORIZATION,
+    middleware::Logger,
+    web,
 };
-use futures_util::future::{ready, LocalBoxFuture, Ready};
-use role_system::{RoleSystem, Role, Permission, Subject, Resource};
+use futures_util::future::{LocalBoxFuture, Ready, ready};
+use role_system::{Permission, Resource, Role, RoleSystem, Subject};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 // =============================================================================
 // App State and Configuration
@@ -58,7 +55,8 @@ impl RoleConfig {
     }
 
     pub fn require_roles(mut self, roles: &[&str]) -> Self {
-        self.required_roles.extend(roles.iter().map(|r| r.to_string()));
+        self.required_roles
+            .extend(roles.iter().map(|r| r.to_string()));
         self
     }
 
@@ -79,7 +77,16 @@ struct Claims {
     exp: usize,
 }
 
-// Mock JWT decoder (in real app, use jsonwebtoken crate)
+// ⚠️ SECURITY WARNING: Mock JWT decoder - DO NOT USE IN PRODUCTION! ⚠️
+// This is a demonstration-only implementation that accepts any token.
+// In production applications, you MUST use proper JWT validation with:
+// - The `jsonwebtoken` crate or similar secure library
+// - Proper cryptographic signature verification
+// - Token expiration checking
+// - Issuer and audience validation
+// - Secure secret key management
+// Using this mock implementation in production exposes your application to
+// serious security vulnerabilities including authentication bypass.
 fn decode_jwt(token: &str) -> Result<Claims> {
     // This is a mock implementation
     // In production, use the `jsonwebtoken` crate
@@ -161,7 +168,9 @@ where
 
         Box::pin(async move {
             // Extract authorization header
-            let auth_header = req.headers().get(AUTHORIZATION)
+            let auth_header = req
+                .headers()
+                .get(AUTHORIZATION)
                 .and_then(|h| h.to_str().ok())
                 .unwrap_or("");
 
@@ -169,12 +178,11 @@ where
             let claims = match decode_jwt(auth_header) {
                 Ok(claims) => claims,
                 Err(_) => {
-                    return Ok(req.into_response(
-                        HttpResponse::Unauthorized()
-                            .json(serde_json::json!({
-                                "error": "Invalid or missing token"
-                            }))
-                    ));
+                    return Ok(req.into_response(HttpResponse::Unauthorized().json(
+                        serde_json::json!({
+                            "error": "Invalid or missing token"
+                        }),
+                    )));
                 }
             };
 
@@ -182,12 +190,11 @@ where
             let role_system = match req.app_data::<web::Data<AppState>>() {
                 Some(state) => state.role_system.clone(),
                 None => {
-                    return Ok(req.into_response(
-                        HttpResponse::InternalServerError()
-                            .json(serde_json::json!({
-                                "error": "Role system not configured"
-                            }))
-                    ));
+                    return Ok(req.into_response(HttpResponse::InternalServerError().json(
+                        serde_json::json!({
+                            "error": "Role system not configured"
+                        }),
+                    )));
                 }
             };
 
@@ -199,7 +206,7 @@ where
             let mut context = HashMap::new();
             context.insert("method".to_string(), req.method().to_string());
             context.insert("path".to_string(), req.path().to_string());
-            
+
             // Add query parameters to context
             for (key, value) in req.query_string().split('&').filter_map(|s| {
                 let parts: Vec<&str> = s.split('=').collect();
@@ -214,33 +221,31 @@ where
 
             // Check permission with context
             let has_permission = match role_system.check_permission_with_context(
-                &subject, 
-                &config.action, 
-                &resource, 
-                &context
+                &subject,
+                &config.action,
+                &resource,
+                &context,
             ) {
                 Ok(result) => result,
                 Err(e) => {
                     log::error!("Permission check failed: {}", e);
-                    return Ok(req.into_response(
-                        HttpResponse::InternalServerError()
-                            .json(serde_json::json!({
-                                "error": "Permission check failed"
-                            }))
-                    ));
+                    return Ok(req.into_response(HttpResponse::InternalServerError().json(
+                        serde_json::json!({
+                            "error": "Permission check failed"
+                        }),
+                    )));
                 }
             };
 
             if !has_permission {
-                return Ok(req.into_response(
-                    HttpResponse::Forbidden()
-                        .json(serde_json::json!({
-                            "error": "Insufficient permissions",
-                            "required_action": config.action,
-                            "required_resource": config.resource_type,
-                            "user_roles": claims.roles
-                        }))
-                ));
+                return Ok(
+                    req.into_response(HttpResponse::Forbidden().json(serde_json::json!({
+                        "error": "Insufficient permissions",
+                        "required_action": config.action,
+                        "required_resource": config.resource_type,
+                        "user_roles": claims.roles
+                    }))),
+                );
             }
 
             // Store user info in request extensions for handlers to use
@@ -263,10 +268,7 @@ pub fn require_permission(action: &str, resource_type: &str) -> RoleAuth {
 
 /// Create auth middleware that requires specific roles
 pub fn require_roles(action: &str, resource_type: &str, roles: &[&str]) -> RoleAuth {
-    RoleAuth::new(
-        RoleConfig::new(action, resource_type)
-            .require_roles(roles)
-    )
+    RoleAuth::new(RoleConfig::new(action, resource_type).require_roles(roles))
 }
 
 /// Admin-only middleware
@@ -297,7 +299,7 @@ async fn public_endpoint() -> HttpResponse {
 async fn protected_endpoint(req: actix_web::HttpRequest) -> HttpResponse {
     // Get user info from middleware
     let claims = req.extensions().get::<Claims>().unwrap();
-    
+
     HttpResponse::Ok().json(serde_json::json!({
         "message": "Access granted",
         "user": claims.sub,
@@ -307,7 +309,7 @@ async fn protected_endpoint(req: actix_web::HttpRequest) -> HttpResponse {
 
 async fn admin_endpoint(req: actix_web::HttpRequest) -> HttpResponse {
     let claims = req.extensions().get::<Claims>().unwrap();
-    
+
     HttpResponse::Ok().json(serde_json::json!({
         "message": "Admin access granted",
         "user": claims.sub,
@@ -315,13 +317,10 @@ async fn admin_endpoint(req: actix_web::HttpRequest) -> HttpResponse {
     }))
 }
 
-async fn document_endpoint(
-    req: actix_web::HttpRequest,
-    path: web::Path<String>,
-) -> HttpResponse {
+async fn document_endpoint(req: actix_web::HttpRequest, path: web::Path<String>) -> HttpResponse {
     let claims = req.extensions().get::<Claims>().unwrap();
     let doc_id = path.into_inner();
-    
+
     HttpResponse::Ok().json(serde_json::json!({
         "message": "Document access granted",
         "user": claims.sub,
@@ -366,22 +365,21 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             // Public routes (no middleware)
             .route("/public", web::get().to(public_endpoint))
-            
             // Protected routes with different permission requirements
             .service(
                 web::scope("/protected")
                     .wrap(require_permission("access", "api"))
-                    .route("", web::get().to(protected_endpoint))
+                    .route("", web::get().to(protected_endpoint)),
             )
             .service(
                 web::scope("/admin")
                     .wrap(admin_only())
-                    .route("", web::get().to(admin_endpoint))
+                    .route("", web::get().to(admin_endpoint)),
             )
             .service(
                 web::scope("/documents")
                     .wrap(require_permission("read", "documents"))
-                    .route("/{id}", web::get().to(document_endpoint))
+                    .route("/{id}", web::get().to(document_endpoint)),
             )
     })
     .bind("127.0.0.1:8080")?
@@ -397,8 +395,7 @@ fn setup_roles(role_system: &mut RoleSystem) -> Result<(), Box<dyn std::error::E
     let api_access = Permission::new("access", "api");
 
     // Create roles
-    let guest = Role::new("guest")
-        .add_permission(api_access.clone());
+    let guest = Role::new("guest").add_permission(api_access.clone());
 
     let editor = Role::new("editor")
         .add_permission(api_access.clone())
@@ -409,8 +406,7 @@ fn setup_roles(role_system: &mut RoleSystem) -> Result<(), Box<dyn std::error::E
         .add_permission(api_access.clone())
         .add_permission(admin_perm.clone());
 
-    let super_admin = Role::new("super_admin")
-        .add_permission(Permission::super_admin());
+    let super_admin = Role::new("super_admin").add_permission(Permission::super_admin());
 
     // Register roles
     role_system.register_role(guest)?;

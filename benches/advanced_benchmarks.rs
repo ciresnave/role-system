@@ -158,14 +158,18 @@ fn bench_role_hierarchy(c: &mut Criterion) {
         ("intern", vec![]),
     ];
 
-    for (role_name, child_roles) in &hierarchy {
+    // First, register all roles
+    for (role_name, _) in &hierarchy {
         let mut role = Role::new(role_name.to_string());
         role = role.add_permission(Permission::new(
             format!("{}_action", role_name),
             "resource".to_string(),
         ));
         system.register_role(role).unwrap();
+    }
 
+    // Then, set up inheritance relationships
+    for (role_name, child_roles) in &hierarchy {
         for child in child_roles {
             system.add_role_inheritance(child, role_name).unwrap();
         }

@@ -1,8 +1,8 @@
 //! # Rocket Middleware for Role System
-//! 
+//!
 //! This example demonstrates how to create reusable guards and fairings
 //! for Rocket that automatically handle role-based authorization.
-//! 
+//!
 //! ## Features
 //! - Custom request guards for authentication
 //! - Role-based route protection
@@ -11,20 +11,18 @@
 //! - Automatic error responses
 
 use rocket::{
+    Build, Rocket, State,
     fairing::{Fairing, Info, Kind},
+    get,
     http::{Header, Status},
+    launch, post,
     request::{FromRequest, Outcome, Request},
     response::{self, Responder, Response},
-    routes, get, post, launch,
+    routes,
     serde::{Deserialize, Serialize, json::Json},
-    State, Build, Rocket,
 };
-use role_system::{RoleSystem, Role, Permission, Subject, Resource};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    io::Cursor,
-};
+use role_system::{Permission, Resource, Role, RoleSystem, Subject};
+use std::{collections::HashMap, io::Cursor, sync::Arc};
 
 // =============================================================================
 // App State
@@ -115,7 +113,7 @@ impl RequirePermissionBuilder {
         let role_system = match request.guard::<&State<AppRoleSystem>>().await {
             Outcome::Success(rs) => rs,
             Outcome::Failure(_) => {
-                return Outcome::Failure((Status::InternalServerError, AuthError::SystemError))
+                return Outcome::Failure((Status::InternalServerError, AuthError::SystemError));
             }
             Outcome::Forward(f) => return Outcome::Forward(f),
         };
@@ -127,7 +125,7 @@ impl RequirePermissionBuilder {
         let has_permission = match role_system.check_permission(&subject, &self.action, &resource) {
             Ok(result) => result,
             Err(_) => {
-                return Outcome::Failure((Status::InternalServerError, AuthError::SystemError))
+                return Outcome::Failure((Status::InternalServerError, AuthError::SystemError));
             }
         };
 
@@ -151,7 +149,10 @@ impl<'r> FromRequest<'r> for AdminUser {
     type Error = AuthError;
 
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        match RequirePermission::new("admin", "*").from_request(request).await {
+        match RequirePermission::new("admin", "*")
+            .from_request(request)
+            .await
+        {
             Outcome::Success(req_perm) => Outcome::Success(AdminUser(req_perm.user)),
             Outcome::Failure(f) => Outcome::Failure(f),
             Outcome::Forward(f) => Outcome::Forward(f),
@@ -166,7 +167,10 @@ impl<'r> FromRequest<'r> for DocumentReader {
     type Error = AuthError;
 
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        match RequirePermission::new("read", "documents").from_request(request).await {
+        match RequirePermission::new("read", "documents")
+            .from_request(request)
+            .await
+        {
             Outcome::Success(req_perm) => Outcome::Success(DocumentReader(req_perm.user)),
             Outcome::Failure(f) => Outcome::Failure(f),
             Outcome::Forward(f) => Outcome::Forward(f),
@@ -181,7 +185,10 @@ impl<'r> FromRequest<'r> for DocumentWriter {
     type Error = AuthError;
 
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        match RequirePermission::new("write", "documents").from_request(request).await {
+        match RequirePermission::new("write", "documents")
+            .from_request(request)
+            .await
+        {
             Outcome::Success(req_perm) => Outcome::Success(DocumentWriter(req_perm.user)),
             Outcome::Failure(f) => Outcome::Failure(f),
             Outcome::Forward(f) => Outcome::Forward(f),
@@ -218,7 +225,10 @@ impl<'r> Responder<'r, 'static> for AuthError {
         Response::build()
             .status(status)
             .header(rocket::http::ContentType::JSON)
-            .sized_body(error_json.to_string().len(), Cursor::new(error_json.to_string()))
+            .sized_body(
+                error_json.to_string().len(),
+                Cursor::new(error_json.to_string()),
+            )
             .ok()
     }
 }
@@ -244,17 +254,25 @@ impl Fairing for AuthFairing {
         request.local_cache(|| request_id);
 
         // Log the request
-        println!("🔍 {} {} - ID: {}", 
-                request.method(), 
-                request.uri(),
-                request.local_cache(|| String::new()));
+        println!(
+            "🔍 {} {} - ID: {}",
+            request.method(),
+            request.uri(),
+            request.local_cache(|| String::new())
+        );
     }
 
     async fn on_response<'r>(&self, request: &'r Request<'_>, response: &mut Response<'r>) {
         // Add CORS headers
         response.set_header(Header::new("Access-Control-Allow-Origin", "*"));
-        response.set_header(Header::new("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"));
-        response.set_header(Header::new("Access-Control-Allow-Headers", "Content-Type, Authorization"));
+        response.set_header(Header::new(
+            "Access-Control-Allow-Methods",
+            "GET, POST, PUT, DELETE, OPTIONS",
+        ));
+        response.set_header(Header::new(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization",
+        ));
 
         // Log the response
         let request_id = request.local_cache(|| "unknown".to_string());
@@ -349,7 +367,7 @@ fn custom_permission_check(
     // Custom permission check with context
     let subject = Subject::user(&user.user_id);
     let resource_obj = Resource::new("dynamic", &resource);
-    
+
     let mut context = HashMap::new();
     context.insert("request_origin".to_string(), "rocket-api".to_string());
 
@@ -383,6 +401,16 @@ struct CreateDocumentRequest {
 // JWT Helper (Mock Implementation)
 // =============================================================================
 
+// ⚠️ SECURITY WARNING: Mock JWT decoder - DO NOT USE IN PRODUCTION! ⚠️
+// This is a demonstration-only implementation that accepts hardcoded tokens.
+// In production applications, you MUST use proper JWT validation with:
+// - The `jsonwebtoken` crate or similar secure library
+// - Proper cryptographic signature verification
+// - Token expiration checking
+// - Issuer and audience validation
+// - Secure secret key management
+// Using this mock implementation in production exposes your application to
+// serious security vulnerabilities including authentication bypass.
 fn decode_jwt(token: &str) -> Result<Claims, Box<dyn std::error::Error>> {
     // Mock JWT decoder - in production use `jsonwebtoken` crate
     match token {
@@ -433,13 +461,16 @@ fn rocket() -> Rocket<Build> {
         .manage(Arc::new(role_system))
         .attach(AuthFairing)
         .mount("/", routes![index, public])
-        .mount("/api", routes![
-            protected,
-            admin,
-            read_document,
-            create_document,
-            custom_permission_check
-        ])
+        .mount(
+            "/api",
+            routes![
+                protected,
+                admin,
+                read_document,
+                create_document,
+                custom_permission_check
+            ],
+        )
 }
 
 fn setup_role_system() -> Result<RoleSystem, Box<dyn std::error::Error>> {
@@ -451,8 +482,7 @@ fn setup_role_system() -> Result<RoleSystem, Box<dyn std::error::Error>> {
     let admin_perm = Permission::new("admin", "*");
 
     // Create roles
-    let user = Role::new("user")
-        .add_permission(Permission::new("access", "api"));
+    let user = Role::new("user").add_permission(Permission::new("access", "api"));
 
     let editor = Role::new("editor")
         .add_permission(Permission::new("access", "api"))
@@ -463,8 +493,7 @@ fn setup_role_system() -> Result<RoleSystem, Box<dyn std::error::Error>> {
         .add_permission(Permission::new("access", "api"))
         .add_permission(admin_perm.clone());
 
-    let super_admin = Role::new("super_admin")
-        .add_permission(Permission::super_admin());
+    let super_admin = Role::new("super_admin").add_permission(Permission::super_admin());
 
     // Register roles
     role_system.register_role(user)?;

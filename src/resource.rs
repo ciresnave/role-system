@@ -1,5 +1,6 @@
 //! Resource definitions for access control.
 
+use crate::error::Error;
 use std::collections::HashMap;
 
 /// A resource represents something that can be accessed or acted upon.
@@ -19,27 +20,58 @@ pub struct Resource {
 }
 
 impl Resource {
-    /// Create a new resource.
-    pub fn new(id: impl Into<String>, resource_type: impl Into<String>) -> Self {
+    /// Create a new resource with validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `ValidationError` if the ID or resource type contains path traversal
+    /// sequences or null characters.
+    pub fn new_checked(
+        id: impl Into<String>,
+        resource_type: impl Into<String>,
+    ) -> Result<Self, Error> {
         let id = id.into();
         let resource_type = resource_type.into();
 
         // Validate resource ID for path traversal attempts
         if id.contains("..") || id.contains('\0') {
-            panic!("Resource ID cannot contain path traversal sequences or null characters");
+            return Err(Error::ValidationError {
+                field: "id".to_string(),
+                reason: "Resource ID cannot contain path traversal sequences or null characters"
+                    .to_string(),
+                invalid_value: Some(id),
+            });
         }
 
         // Validate resource type for path traversal attempts
         if resource_type.contains("..") || resource_type.contains('\0') {
-            panic!("Resource type cannot contain path traversal sequences or null characters");
+            return Err(Error::ValidationError {
+                field: "resource_type".to_string(),
+                reason: "Resource type cannot contain path traversal sequences or null characters"
+                    .to_string(),
+                invalid_value: Some(resource_type),
+            });
         }
 
-        Self {
+        Ok(Self {
             id,
             resource_type,
             name: None,
             attributes: HashMap::new(),
             path: None,
+        })
+    }
+
+    /// Create a new resource.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the ID or resource type contains path traversal
+    /// sequences or null characters. For non-panicking validation, use `new_checked`.
+    pub fn new(id: impl Into<String>, resource_type: impl Into<String>) -> Self {
+        match Self::new_checked(id, resource_type) {
+            Ok(resource) => resource,
+            Err(e) => panic!("Resource validation failed: {}", e),
         }
     }
 

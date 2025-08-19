@@ -134,6 +134,116 @@ macro_rules! conditional_permission {
     };
 }
 
+/// Define a single role with its permissions using a fluent builder syntax.
+///
+/// # Example
+/// ```rust
+/// use role_system::define_role;
+///
+/// let admin_role = define_role!(admin {
+///     users: ["create", "read", "update", "delete"],
+///     roles: ["assign", "remove"],
+///     system: ["configure"]
+/// });
+/// ```
+#[macro_export]
+macro_rules! define_role {
+    (
+        $role_name:ident {
+            $(
+                $resource:ident: [$($action:literal),* $(,)?]
+            ),* $(,)?
+        }
+    ) => {
+        {
+            let mut builder = $crate::role::RoleBuilder::new().name(stringify!($role_name));
+
+            $(
+                let resource = stringify!($resource);
+                let actions = vec![$($action),*];
+                builder = builder.allow(resource, actions);
+            )*
+
+            builder.build().expect("Failed to build role")
+        }
+    };
+}
+
+/// Define multiple roles with their permissions declaratively.
+///
+/// # Example
+/// ```rust
+/// use role_system::define_roles;
+///
+/// let roles = define_roles! {
+///     admin {
+///         users: ["create", "read", "update", "delete"],
+///         roles: ["read", "assign", "remove"],
+///         system: ["configure", "monitor"]
+///     },
+///
+///     user {
+///         profile: ["read", "update"],
+///         posts: ["create", "read"]
+///     }
+/// };
+/// ```
+#[macro_export]
+macro_rules! define_roles {
+    (
+        $(
+            $role_name:ident {
+                $(
+                    $resource:ident: [$($action:literal),* $(,)?]
+                ),* $(,)?
+            }
+        ),* $(,)?
+    ) => {
+        {
+            use std::collections::HashMap;
+
+            let mut roles = HashMap::new();
+
+            $(
+                let mut builder = $crate::role::RoleBuilder::new().name(stringify!($role_name));
+
+                $(
+                    let resource = stringify!($resource);
+                    let actions = vec![$($action),*];
+                    builder = builder.allow(resource, actions);
+                )*
+
+                let role = builder.build().expect("Failed to build role");
+                roles.insert(stringify!($role_name).to_string(), role);
+            )*
+
+            roles
+        }
+    };
+}
+
+/// Quick macro for creating a permission with resource and actions.
+///
+/// # Example
+/// ```rust
+/// use role_system::permission;
+///
+/// let perm = permission!("users", "read");
+/// let perms = permission!("posts", ["create", "update", "delete"]);
+/// ```
+#[macro_export]
+macro_rules! permission {
+    ($resource:literal, $action:literal) => {
+        $crate::permission::Permission::new($action, $resource)
+    };
+
+    ($resource:literal, [$($action:literal),* $(,)?]) => {
+        vec![$(
+            $crate::permission::Permission::new($action, $resource)
+        ),*]
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -199,5 +309,49 @@ mod tests {
 
         let invalid_context = HashMap::new();
         assert!(!perm.is_granted("access", "secure_area", &invalid_context));
+    }
+
+    #[test]
+    fn test_define_role_macro() {
+        let role = define_role!(admin {
+            users: ["create", "read", "update", "delete"],
+            roles: ["assign", "remove"]
+        });
+
+        assert_eq!(role.name(), "admin");
+        assert_eq!(role.permissions().len(), 6); // 4 user actions + 2 role actions
+    }
+
+    #[test]
+    fn test_permission_macro() {
+        let single_perm = permission!("users", "read");
+        assert_eq!(single_perm.action(), "read");
+        assert_eq!(single_perm.resource_type(), "users");
+
+        let multi_perms = permission!("posts", ["create", "update", "delete"]);
+        assert_eq!(multi_perms.len(), 3);
+    }
+
+    #[test]
+    fn test_define_roles_macro() {
+        let roles = define_roles! {
+            admin {
+                users: ["create", "read", "update", "delete"],
+                roles: ["assign"]
+            },
+
+            user {
+                profile: ["read", "update"],
+                posts: ["create"]
+            }
+        };
+
+        assert_eq!(roles.len(), 2);
+        assert!(roles.contains_key("admin"));
+        assert!(roles.contains_key("user"));
+
+        let admin_role = &roles["admin"];
+        assert_eq!(admin_role.name(), "admin");
+        assert_eq!(admin_role.permissions().len(), 5); // 4 user actions + 1 role action
     }
 }

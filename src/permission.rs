@@ -125,6 +125,61 @@ impl Permission {
         Self::new("*", "*")
     }
 
+    /// Create a permission with enhanced context awareness.
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::permission::Permission;
+    /// let perm = Permission::with_context("users", "read", Some("own_data"));
+    /// ```
+    pub fn with_context(
+        resource_type: impl Into<String>,
+        action: impl Into<String>,
+        context: Option<impl Into<String>>,
+    ) -> Self {
+        let mut permission = Self::new(action, resource_type);
+        if let Some(ctx) = context {
+            permission.instance = Some(ctx.into());
+        }
+        permission
+    }
+
+    /// Create a permission with multiple scopes/actions.
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::permission::Permission;
+    /// let perms = Permission::with_scope("users", "read", vec!["profile", "preferences"]);
+    /// ```
+    pub fn with_scope(
+        resource_type: impl Into<String>,
+        action: impl Into<String>,
+        scopes: Vec<impl Into<String>>,
+    ) -> Vec<Self> {
+        let resource_type = resource_type.into();
+        let action = action.into();
+
+        scopes
+            .into_iter()
+            .map(|scope| Self::with_instance(action.clone(), resource_type.clone(), scope.into()))
+            .collect()
+    }
+
+    /// Create a conditional permission that depends on context.
+    ///
+    /// # Example
+    /// ```rust
+    /// use role_system::permission::Permission;
+    /// let perm = Permission::conditional("users", "update")
+    ///     .when(|context| context.get("user_id") == context.get("target_id"));
+    /// ```
+    pub fn conditional(
+        resource_type: impl Into<String>,
+        action: impl Into<String>,
+    ) -> ConditionalPermissionBuilder {
+        ConditionalPermissionBuilder::new(resource_type, action)
+    }
+
     /// Get the action this permission grants.
     pub fn action(&self) -> &str {
         &self.action
@@ -284,6 +339,61 @@ impl Permission {
         }
 
         Ok(())
+    }
+}
+
+/// Builder for creating conditional permissions with fluent API.
+pub struct ConditionalPermissionBuilder {
+    resource_type: String,
+    action: String,
+    conditions: Vec<PermissionCondition>,
+}
+
+impl ConditionalPermissionBuilder {
+    /// Create a new conditional permission builder.
+    pub fn new(resource_type: impl Into<String>, action: impl Into<String>) -> Self {
+        Self {
+            resource_type: resource_type.into(),
+            action: action.into(),
+            conditions: Vec::new(),
+        }
+    }
+
+    /// Add a condition that must be true for the permission to be granted.
+    pub fn when<F>(mut self, condition: F) -> Self
+    where
+        F: Fn(&HashMap<String, String>) -> bool + Send + Sync + 'static,
+    {
+        self.conditions.push(Arc::new(condition));
+        self
+    }
+
+    /// Add an alternative condition (OR logic).
+    pub fn or_when<F>(mut self, condition: F) -> Self
+    where
+        F: Fn(&HashMap<String, String>) -> bool + Send + Sync + 'static,
+    {
+        self.conditions.push(Arc::new(condition));
+        self
+    }
+
+    /// Build the final permission with all conditions combined.
+    pub fn build(self) -> Permission {
+        let combined_condition = if self.conditions.is_empty() {
+            None
+        } else {
+            Some(Arc::new(move |context: &HashMap<String, String>| {
+                // OR logic: any condition can be true
+                self.conditions.iter().any(|condition| condition(context))
+            }) as PermissionCondition)
+        };
+
+        Permission {
+            action: self.action,
+            resource_type: self.resource_type,
+            instance: None,
+            condition: combined_condition,
+        }
     }
 }
 
