@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-18
+
+### 🧪 Tests
+
+- `test_role_elevation_expiry` no longer depends on a 10 ms window (it failed intermittently under code coverage); it uses a 1.5 s elevation and a 1.7 s wait.
+
 ## [1.2.0] - 2026-10-18
 
 ### 🔒 Security
