@@ -282,16 +282,18 @@ fn test_role_elevation_expiry() {
     // User should not have admin permission initially
     assert!(!system.check_permission(&user, "admin", &resource).unwrap());
 
-    // Elevate user to admin for a very short duration
+    // Elevate user to admin for a short duration. The window is long enough that a slow or
+    // instrumented (coverage) run cannot expire it before the first check, and the wait below
+    // is longer than the window so the second check always sees it expired.
     system
-        .elevate_role(&user, "admin", Some(Duration::from_millis(10)))
+        .elevate_role(&user, "admin", Some(Duration::from_millis(1500)))
         .unwrap();
 
     // User should have admin permission immediately after elevation
     assert!(system.check_permission(&user, "admin", &resource).unwrap());
 
-    // Wait for elevation to expire with a longer delay to ensure expiry
-    thread::sleep(Duration::from_millis(100));
+    // Wait for the elevation to expire
+    thread::sleep(Duration::from_millis(1700));
 
     // User should no longer have admin permission
     assert!(!system.check_permission(&user, "admin", &resource).unwrap());
