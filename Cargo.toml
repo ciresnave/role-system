@@ -1,6 +1,6 @@
 [package]
 name = "role-system"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2024"
 description = "A flexible and powerful role-based access control (RBAC) library for Rust applications"
 license = "MIT OR Apache-2.0"
@@ -44,33 +44,31 @@ env_logger = { version = "0.11.8", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10" # Added for proper timezone handling
 uuid = { version = "1.0", features = ["v4", "serde"] }
-sqlx = { version = "0.8", features = [
+sqlx = { version = "0.9", features = [
   "postgres",
   "sqlite",
-  "runtime-tokio-rustls",
+  "runtime-tokio",
+  "tls-rustls",
   "chrono",
   "uuid",
   "json",
 ], optional = true }
 
 # OpenTelemetry for observability
-opentelemetry = { version = "0.21", optional = true }
-opentelemetry-semantic-conventions = { version = "0.13", optional = true }
+opentelemetry = { version = "0.33", optional = true }
+opentelemetry-semantic-conventions = { version = "0.33", optional = true }
 num_cpus = "1.16.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
-criterion = "0.6.0"
+criterion = "0.8.2"
 env_logger = "0.11.8"
-actix-web = "4.4"
-axum = "0.8.4"
-rocket = "0.5"
 tokio = { version = "1.0", features = ["full"] }
 proptest = "1.0"
-mockall = "0.13.1"
+mockall = "0.15.0"
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
-rand = "0.8"
+rand = "0.10"
 
 [[bench]]
 name = "benchmark"

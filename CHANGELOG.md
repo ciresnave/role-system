@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-10-18
+
+### 🔧 Maintenance
+
+- **Dependencies updated to their newest releases** (clears RUSTSEC-2026-0007, -0204, -0258, -0285, -0346, -0348, -0349, -0098 and -0049 among the advisories reported against the previous lockfile, and RUSTSEC-2023-0071, which no longer appears in `Cargo.lock`): `sqlx` 0.9 (features `runtime-tokio`, `tls-rustls`), `opentelemetry` and `opentelemetry-semantic-conventions` 0.33, and dev-dependencies `criterion` 0.8, `mockall` 0.15 and `rand` 0.10. Removed the unused dev-dependencies `actix-web`, `axum` and `rocket`, which were the only source of the vulnerable `h2` 0.3.
+- **`DatabaseStorage::new_with_prefix` validates the table prefix.** The prefix is spliced into SQL identifiers, and `sqlx` 0.9 requires dynamic SQL to be marked as audited; the prefix must now be 1-32 ASCII letters, digits or underscores and must not start with a digit, otherwise an `Error::Storage` is returned.
+- CI is green again: `cargo fmt` applied, `async-trait` updated (the `must_use` clippy error), and a timing-sensitive health-check test given generous timeouts so it no longer fails under code coverage.
+
 ## [1.1.1] - 2025-08-19
 
 ### 🔒 Security Enhancements

@@ -1,13 +1,13 @@
 //! Integration tests for the role system.
 
 use role_system::{
+    Error,
     core::{RoleSystem, RoleSystemConfig},
     permission::Permission,
     resource::Resource,
     role::{Role, RoleBuilder},
     storage::MemoryStorage,
     subject::Subject,
-    Error,
 };
 use std::{collections::HashMap, time::Duration};
 
@@ -137,15 +137,19 @@ fn test_conditional_permissions() {
     context.insert("time".to_string(), "business_hours".to_string());
     context.insert("location".to_string(), "office".to_string());
 
-    assert!(system
-        .check_permission_with_context(&user, "print", &document, &context)
-        .unwrap());
+    assert!(
+        system
+            .check_permission_with_context(&user, "print", &document, &context)
+            .unwrap()
+    );
 
     // Test with incorrect context
     context.insert("location".to_string(), "home".to_string());
-    assert!(!system
-        .check_permission_with_context(&user, "print", &document, &context)
-        .unwrap());
+    assert!(
+        !system
+            .check_permission_with_context(&user, "print", &document, &context)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -179,7 +183,8 @@ fn test_multiple_role_assignment() {
     // Create different roles
     let doc_reader = Role::new("doc_reader").add_permission(Permission::new("read", "documents"));
     let user_manager = Role::new("user_manager").add_permission(Permission::new("manage", "users"));
-    let project_lead = Role::new("project_lead").add_permission(Permission::new("lead", "projects"));
+    let project_lead =
+        Role::new("project_lead").add_permission(Permission::new("lead", "projects"));
 
     system.register_role(doc_reader).unwrap();
     system.register_role(user_manager).unwrap();
@@ -199,7 +204,7 @@ fn test_multiple_role_assignment() {
     assert!(system.check_permission(&user, "read", &doc).unwrap());
     assert!(system.check_permission(&user, "manage", &user_res).unwrap());
     assert!(system.check_permission(&user, "lead", &project).unwrap());
-    
+
     // Should not have permissions not granted by any role
     assert!(!system.check_permission(&user, "write", &doc).unwrap());
 }
@@ -251,7 +256,10 @@ fn test_role_builder() {
         .unwrap();
 
     assert_eq!(role.name(), "complex_role");
-    assert_eq!(role.description(), Some("A complex role with multiple permissions"));
+    assert_eq!(
+        role.description(),
+        Some("A complex role with multiple permissions")
+    );
     assert_eq!(role.permissions().len(), 2);
     assert_eq!(role.metadata("department"), Some("Engineering"));
     assert_eq!(role.metadata("level"), Some("senior"));
@@ -344,7 +352,7 @@ fn test_configuration() {
     system.add_role_inheritance("role1", "role0").unwrap();
     system.add_role_inheritance("role2", "role1").unwrap();
     system.add_role_inheritance("role3", "role2").unwrap();
-    
+
     // This should fail due to max depth
     assert!(matches!(
         system.add_role_inheritance("role4", "role3"),
@@ -372,7 +380,10 @@ mod async_tests {
 
         // Check permission
         let doc = Resource::new("doc1", "documents");
-        let can_read = async_system.check_permission(&user, "read", &doc).await.unwrap();
+        let can_read = async_system
+            .check_permission(&user, "read", &doc)
+            .await
+            .unwrap();
         assert!(can_read);
     }
 
