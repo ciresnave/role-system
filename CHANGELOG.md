@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DatabaseStorage::new_with_prefix` validates the table prefix.** The prefix is spliced into SQL identifiers, and `sqlx` 0.9 requires dynamic SQL to be marked as audited; the prefix must now be 1-32 ASCII letters, digits or underscores and must not start with a digit, otherwise an `Error::Storage` is returned.
 - CI is green again: `cargo fmt` applied, `async-trait` updated (the `must_use` clippy error), and a timing-sensitive health-check test given generous timeouts so it no longer fails under code coverage.
 
+## [Unreleased]
+
+### 🔒 Security
+
+- **Permission cache returned answers for the wrong resource type.** The cache key was built from the action, resource id and context but not the resource type, so a grant (or denial) cached for one type answered checks on another type with the same resource id. Present since 0.1.0. The key now includes the type, and each field is escaped so field boundaries cannot be forged.
+- **Instance-scoped permissions were not enforced.** `check_permission` matched on action and resource type only, so a permission created with `Permission::with_instance(..)` granted every instance of the type. Present since 1.0.0. The check now honours instances.
+
+### ⚠️ Behaviour change
+
+- A permission with an instance now grants only that instance (or any named instance, if the instance is `"*"`). It no longer grants a check whose resource id is empty (an empty id means "no instance"); permissions without an instance are unchanged and still cover every instance. Callers that relied on the old, wider behaviour must grant the permission without an instance.
+- New `Role::has_permission_with_instance`.
+
 ## [1.1.1] - 2025-08-19
 
 ### 🔒 Security Enhancements
