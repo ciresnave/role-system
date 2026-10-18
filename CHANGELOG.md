@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-18
+
+### 🐛 Fixes
+
+- **`DatabaseStorage::store_role_async` failed with a foreign-key error.** The role's permissions were inserted through the connection pool while the role row was still uncommitted inside the transaction, so another connection could not see it. They are now inserted on the transaction's connection.
+- **Concurrent `DatabaseStorage` start-up could fail** with a duplicate-key error from PostgreSQL's `CREATE TABLE IF NOT EXISTS`. Schema creation now runs in one transaction under an advisory lock.
+
+### 🧪 Tests
+
+- The two PostgreSQL tests are no longer `#[ignore]`d: CI runs them against a `postgres:16` service container (set `DATABASE_URL` to run them locally). They had never run in CI, which is how the two bugs above went unnoticed.
+
 ## [1.2.1] - 2026-10-18
 
 ### 🧪 Tests

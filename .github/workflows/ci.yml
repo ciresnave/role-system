@@ -13,6 +13,21 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: rbac_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/rbac_test
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
