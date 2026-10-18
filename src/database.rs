@@ -20,6 +20,10 @@ pub struct DatabaseStorage {
     table_prefix: String,
 }
 
+/// Advisory-lock key serialising schema creation across processes and connections.
+#[cfg(feature = "database")]
+const SCHEMA_LOCK_KEY: i64 = 0x524f_4c45_5359_5301;
+
 /// Check that a table prefix is safe to splice into SQL identifiers.
 ///
 /// This is what makes the `sqlx::AssertSqlSafe` wrappers below sound: every dynamic SQL string
@@ -146,28 +150,45 @@ impl DatabaseStorage {
             subject_roles_table, subjects_table, roles_table
         );
 
-        // Execute schema creation
+        // Execute schema creation in one transaction under an advisory lock: concurrent
+        // `CREATE TABLE IF NOT EXISTS` calls race inside PostgreSQL and one of them fails with
+        // a duplicate-key error on `pg_type`, so initialisers take turns.
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to start transaction: {}", e)))?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(SCHEMA_LOCK_KEY)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to lock schema creation: {}", e)))?;
+
         sqlx::query(sqlx::AssertSqlSafe(create_roles.as_str()))
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| Error::Storage(format!("Failed to create roles table: {}", e)))?;
 
         sqlx::query(sqlx::AssertSqlSafe(create_role_permissions.as_str()))
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| {
                 Error::Storage(format!("Failed to create role_permissions table: {}", e))
             })?;
 
         sqlx::query(sqlx::AssertSqlSafe(create_subjects.as_str()))
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| Error::Storage(format!("Failed to create subjects table: {}", e)))?;
 
         sqlx::query(sqlx::AssertSqlSafe(create_subject_roles.as_str()))
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| Error::Storage(format!("Failed to create subject_roles table: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to commit schema creation: {}", e)))?;
 
         Ok(())
     }
@@ -195,14 +216,19 @@ impl DatabaseStorage {
     }
 
     /// Store role permissions in the database.
-    async fn store_role_permissions(&self, role_name: &str, role: &Role) -> Result<()> {
+    async fn store_role_permissions(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        role_name: &str,
+        role: &Role,
+    ) -> Result<()> {
         let table = self.role_permissions_table();
 
         // Delete existing permissions for this role
         let delete_query = format!("DELETE FROM {} WHERE role_name = $1", table);
         sqlx::query(sqlx::AssertSqlSafe(delete_query.as_str()))
             .bind(role_name)
-            .execute(&self.pool)
+            .execute(&mut *conn)
             .await
             .map_err(|e| Error::Storage(format!("Failed to delete old permissions: {}", e)))?;
 
@@ -218,7 +244,7 @@ impl DatabaseStorage {
                 .bind(permission.action())
                 .bind(permission.resource_type())
                 .bind(permission.instance())
-                .execute(&self.pool)
+                .execute(&mut *conn)
                 .await
                 .map_err(|e| Error::Storage(format!("Failed to insert permission: {}", e)))?;
         }
@@ -294,7 +320,10 @@ impl DatabaseStorage {
             .map_err(|e| Error::Storage(format!("Failed to store role: {}", e)))?;
 
         // Store permissions
-        self.store_role_permissions(role.name(), &role).await?;
+        // Use the transaction's connection: the role row is not visible to other connections
+        // until commit, so inserting its permissions through the pool violates the foreign key.
+        self.store_role_permissions(&mut tx, role.name(), &role)
+            .await?;
 
         // Commit transaction
         tx.commit()
@@ -515,7 +544,8 @@ mod tests {
     use crate::{permission::Permission, role::Role};
 
     // Note: These tests require a running PostgreSQL database
-    // and the DATABASE_URL environment variable to be set
+    // and the DATABASE_URL environment variable to be set (CI starts a Postgres service
+    // container for them)
 
     async fn setup_test_db() -> DatabaseStorage {
         let database_url = std::env::var("DATABASE_URL")
@@ -527,7 +557,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Ignore by default since it requires a database
     async fn test_database_storage_role_operations() {
         let mut storage = setup_test_db().await;
 
@@ -561,7 +590,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Ignore by default since it requires a database
     async fn test_database_health_check() {
         let storage = setup_test_db().await;
         assert!(storage.health_check().await.unwrap());
