@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-18
+
 ### 🔒 Security
 
 - **Permission cache returned answers for the wrong resource type.** The cache key was built from the action, resource id and context but not the resource type, so a grant (or denial) cached for one type answered checks on another type with the same resource id. Present since 0.1.0. The key now includes the type, and each field is escaped so field boundaries cannot be forged.
