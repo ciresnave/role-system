@@ -113,6 +113,7 @@ impl DatabaseStorage {
                 resource_type VARCHAR(255) NOT NULL,
                 instance_id VARCHAR(255),
                 condition_json JSONB,
+                negated BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 UNIQUE(role_name, action, resource_type, instance_id)
             )
@@ -176,6 +177,17 @@ impl DatabaseStorage {
                 Error::Storage(format!("Failed to create role_permissions table: {}", e))
             })?;
 
+        // Tables made before deny rules existed lack the column; without it a stored deny
+        // would load back as a grant.
+        let add_negated = format!(
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS negated BOOLEAN NOT NULL DEFAULT FALSE",
+            self.role_permissions_table()
+        );
+        sqlx::query(sqlx::AssertSqlSafe(add_negated.as_str()))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to add negated column: {}", e)))?;
+
         sqlx::query(sqlx::AssertSqlSafe(create_subjects.as_str()))
             .execute(&mut *tx)
             .await
@@ -224,6 +236,20 @@ impl DatabaseStorage {
     ) -> Result<()> {
         let table = self.role_permissions_table();
 
+        // A condition is a closure and is not stored; storing the rule without it would load
+        // back as an unconditional one.
+        if role
+            .permissions()
+            .permissions()
+            .iter()
+            .any(|p| p.has_condition())
+        {
+            return Err(Error::Storage(format!(
+                "role '{}' has a conditional permission, which cannot be stored",
+                role_name
+            )));
+        }
+
         // Delete existing permissions for this role
         let delete_query = format!("DELETE FROM {} WHERE role_name = $1", table);
         sqlx::query(sqlx::AssertSqlSafe(delete_query.as_str()))
@@ -235,7 +261,7 @@ impl DatabaseStorage {
         // Insert new permissions
         for permission in role.permissions().permissions() {
             let insert_query = format!(
-                "INSERT INTO {} (role_name, action, resource_type, instance_id) VALUES ($1, $2, $3, $4)",
+                "INSERT INTO {} (role_name, action, resource_type, instance_id, negated) VALUES ($1, $2, $3, $4, $5)",
                 table
             );
 
@@ -244,6 +270,7 @@ impl DatabaseStorage {
                 .bind(permission.action())
                 .bind(permission.resource_type())
                 .bind(permission.instance())
+                .bind(permission.is_deny())
                 .execute(&mut *conn)
                 .await
                 .map_err(|e| Error::Storage(format!("Failed to insert permission: {}", e)))?;
@@ -259,7 +286,7 @@ impl DatabaseStorage {
     ) -> Result<Vec<crate::permission::Permission>> {
         let table = self.role_permissions_table();
         let query = format!(
-            "SELECT action, resource_type, instance_id FROM {} WHERE role_name = $1",
+            "SELECT action, resource_type, instance_id, negated FROM {} WHERE role_name = $1",
             table
         );
 
@@ -275,10 +302,17 @@ impl DatabaseStorage {
             let resource_type: String = row.get("resource_type");
             let instance_id: Option<String> = row.get("instance_id");
 
-            let permission = if let Some(instance) = instance_id {
-                crate::permission::Permission::with_instance(action, resource_type, instance)
-            } else {
-                crate::permission::Permission::new(action, resource_type)
+            let negated: bool = row.get("negated");
+
+            let permission = match (instance_id, negated) {
+                (Some(instance), false) => {
+                    crate::permission::Permission::with_instance(action, resource_type, instance)
+                }
+                (Some(instance), true) => {
+                    crate::permission::Permission::deny_instance(action, resource_type, instance)
+                }
+                (None, false) => crate::permission::Permission::new(action, resource_type),
+                (None, true) => crate::permission::Permission::deny(action, resource_type),
             };
 
             permissions.push(permission);
@@ -587,6 +621,32 @@ mod tests {
         // Delete role
         assert!(storage.delete_role_async("test_role").await.unwrap());
         assert!(!storage.role_exists_async("test_role").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn deny_rules_round_trip_and_conditions_are_refused() {
+        let mut storage = setup_test_db().await;
+
+        let role = Role::new("deny_role")
+            .add_permission(Permission::new("*", "system"))
+            .add_permission(Permission::deny("shutdown", "system"));
+        storage.store_role_async(role).await.unwrap();
+        let loaded = storage.get_role_async("deny_role").await.unwrap().unwrap();
+        let ctx = std::collections::HashMap::new();
+        assert!(!loaded.has_permission("shutdown", "system", &ctx));
+        assert!(loaded.has_permission("read", "system", &ctx));
+
+        // A condition cannot be stored, so storing it must fail instead of loading back
+        // as an unconditional grant.
+        let conditional = Role::new("cond_role").add_permission(Permission::with_condition(
+            "read",
+            "docs",
+            |_| false,
+        ));
+        assert!(storage.store_role_async(conditional).await.is_err());
+        assert!(!storage.role_exists_async("cond_role").await.unwrap());
+
+        storage.delete_role_async("deny_role").await.unwrap();
     }
 
     #[tokio::test]

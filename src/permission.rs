@@ -27,8 +27,34 @@ pub struct Permission {
     /// Optional specific instance of the resource (e.g., "doc123", "user456").
     instance: Option<String>,
     /// Optional conditional validator function.
-    #[cfg_attr(feature = "persistence", serde(skip))]
+    #[cfg_attr(
+        feature = "persistence",
+        serde(default, skip_deserializing, serialize_with = "serialize_condition")
+    )]
     condition: Option<PermissionCondition>,
+    /// A deny rule: when it matches a check, the check is refused even if another permission
+    /// (in this or any other role the subject holds) would grant it.
+    #[cfg_attr(feature = "persistence", serde(default))]
+    negated: bool,
+}
+
+/// A condition is a closure and cannot be saved. Saving a permission that carries one fails,
+/// because loading it back would silently turn a conditional (or always-false) rule into an
+/// unconditional one.
+#[cfg(feature = "persistence")]
+fn serialize_condition<S>(
+    condition: &Option<PermissionCondition>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match condition {
+        None => serializer.serialize_none(),
+        Some(_) => Err(serde::ser::Error::custom(
+            "a permission with a condition cannot be persisted",
+        )),
+    }
 }
 
 /// A condition that must be met for a permission to be granted.
@@ -50,6 +76,7 @@ impl Permission {
             resource_type,
             instance: None,
             condition: None,
+            negated: false,
         }
     }
 
@@ -67,6 +94,7 @@ impl Permission {
             resource_type,
             instance: None,
             condition: None,
+            negated: false,
         })
     }
 
@@ -84,6 +112,35 @@ impl Permission {
 
         permission.instance = Some(instance.to_owned());
         permission
+    }
+
+    /// Create a deny rule for an action on a resource type. A matching deny overrides every
+    /// grant, in this role and in any other role the subject holds.
+    pub fn deny(action: impl Into<String>, resource_type: impl Into<String>) -> Self {
+        let mut permission = Self::new(action, resource_type);
+        permission.negated = true;
+        permission
+    }
+
+    /// Create a deny rule for an action on one resource instance.
+    pub fn deny_instance(
+        action: impl Into<String>,
+        resource_type: impl Into<String>,
+        instance: impl Into<String>,
+    ) -> Self {
+        let mut permission = Self::with_instance(action, resource_type, instance);
+        permission.negated = true;
+        permission
+    }
+
+    /// Whether this permission carries a condition (a closure, which cannot be persisted).
+    pub fn has_condition(&self) -> bool {
+        self.condition.is_some()
+    }
+
+    /// Whether this is a deny rule.
+    pub fn is_deny(&self) -> bool {
+        self.negated
     }
 
     /// Create a permission with a conditional validator.
@@ -393,6 +450,7 @@ impl ConditionalPermissionBuilder {
             resource_type: self.resource_type,
             instance: None,
             condition: combined_condition,
+            negated: false,
         }
     }
 }
@@ -404,6 +462,7 @@ impl std::fmt::Debug for Permission {
             .field("resource_type", &self.resource_type)
             .field("instance", &self.instance)
             .field("has_condition", &self.condition.is_some())
+            .field("negated", &self.negated)
             .finish()
     }
 }
@@ -415,6 +474,7 @@ impl Clone for Permission {
             resource_type: self.resource_type.clone(),
             instance: self.instance.clone(),
             condition: self.condition.clone(), // Now we can clone Arc
+            negated: self.negated,
         }
     }
 }
@@ -424,6 +484,7 @@ impl PartialEq for Permission {
         self.action == other.action
             && self.resource_type == other.resource_type
             && self.instance == other.instance
+            && self.negated == other.negated
         // Note: We don't compare conditions as they're function pointers
     }
 }
@@ -435,6 +496,7 @@ impl std::hash::Hash for Permission {
         self.action.hash(state);
         self.resource_type.hash(state);
         self.instance.hash(state);
+        self.negated.hash(state);
         // Note: We don't hash conditions as they're function pointers
     }
 }
@@ -515,9 +577,27 @@ impl PermissionSet {
         resource_type: &str,
         context: &HashMap<String, String>,
     ) -> bool {
-        self.permissions
-            .iter()
-            .any(|p| p.is_granted(action, resource_type, context))
+        !self.denies(action, resource_type, None, context)
+            && self
+                .permissions
+                .iter()
+                .any(|p| !p.negated && p.is_granted(action, resource_type, context))
+    }
+
+    /// Whether a deny rule matches the request. A deny with a condition matches only when its
+    /// condition holds; an instance-scoped deny matches only that instance.
+    pub fn denies(
+        &self,
+        action: &str,
+        resource_type: &str,
+        instance: Option<&str>,
+        context: &HashMap<String, String>,
+    ) -> bool {
+        self.permissions.iter().any(|p| {
+            p.negated
+                && p.matches_with_instance(action, resource_type, instance)
+                && p.condition.as_ref().is_none_or(|c| c(context))
+        })
     }
 
     /// Check if any permission in the set grants the given action on the resource type and instance.
@@ -528,10 +608,12 @@ impl PermissionSet {
         instance: Option<&str>,
         context: &HashMap<String, String>,
     ) -> bool {
-        self.permissions.iter().any(|p| {
-            p.matches_with_instance(action, resource_type, instance)
-                && (p.condition.is_none() || p.condition.as_ref().unwrap()(context))
-        })
+        !self.denies(action, resource_type, instance, context)
+            && self.permissions.iter().any(|p| {
+                !p.negated
+                    && p.matches_with_instance(action, resource_type, instance)
+                    && (p.condition.is_none() || p.condition.as_ref().unwrap()(context))
+            })
     }
 
     /// Check if any permission in the set implies the given permission.

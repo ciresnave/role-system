@@ -15,6 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-18
+
+### 🔒 Security
+
+- **`RoleBuilder::deny` did not deny** (affects 1.1.1, 1.2.0 and 1.2.2). It added a grant with an always-false condition, which never matched, so every grant of the same action still applied: `allow("system", ["*"]).deny("system", ["shutdown"])` allowed `shutdown`. A deny is now a real rule (`Permission::deny`, `Permission::deny_instance`, `Permission::is_deny`): a matching deny refuses the check even if another permission, in the same role, an inherited role or any other role the subject holds, would grant it. A deny with an instance matches only that instance.
+- **Saving and loading roles could widen permissions** (affects 0.1.0 through 1.2.2). A permission's condition is a closure and was silently dropped when a role was saved, so after a reload (`FileStorage`, `DatabaseStorage`, or serializing a `Role` with the `persistence` feature) a conditional permission, including `deny`'s always-false one, became an unconditional grant. Saving a role that has a conditional permission now fails (`serde` error, or `Error::Storage` from `DatabaseStorage`) instead of widening it on load.
+- **A reloaded `RoleElevation` restarted its clock** (affects 0.1.0 through 1.2.2, for code that serializes `RoleElevation`; the built-in storage backends save roles only). The creation time was not saved and loaded back as "now", so an expired elevation got a fresh full lifetime. The elevation is now saved as a wall-clock creation time and the time that passed while the process was not running counts against it.
+
+### ⚠️ Behaviour changes
+
+- A role built with `deny(...)` now denies. Code that relied on `deny` being inert will see refusals it did not see before.
+- Saving a role with a conditional permission is now an error. Re-create such roles in code at start-up instead of persisting them.
+- `DatabaseStorage` adds a `negated BOOLEAN NOT NULL DEFAULT FALSE` column to its permissions table (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` at start-up). Files and rows saved before this release load as before (every rule is a grant). Anything a previous version already saved from a conditional permission was saved as an unconditional grant and must be reviewed.
+
+
 ## [1.2.2] - 2026-10-18
 
 ### 🐛 Fixes

@@ -728,15 +728,24 @@ where
         // An empty resource id means "no specific instance".
         let instance = Some(resource.id()).filter(|id| !id.is_empty());
 
+        // A deny in any held role wins over a grant in any other.
+        let mut roles = Vec::new();
         for role_name in subject_roles {
-            if let Some(role) = self.storage.get_role(&role_name)?
-                && role.has_permission_with_instance(
-                    action,
-                    resource.resource_type(),
-                    instance,
-                    context,
-                )
-            {
+            if let Some(role) = self.storage.get_role(&role_name)? {
+                if role.denies_with_instance(action, resource.resource_type(), instance, context) {
+                    return Ok(false);
+                }
+                roles.push(role);
+            }
+        }
+
+        for role in roles {
+            if role.has_permission_with_instance(
+                action,
+                resource.resource_type(),
+                instance,
+                context,
+            ) {
                 return Ok(true);
             }
         }

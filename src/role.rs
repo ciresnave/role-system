@@ -318,6 +318,20 @@ impl Role {
             .grants_with_instance(action, resource_type, instance, context)
     }
 
+    /// Whether this role has a deny rule matching the request.
+    pub fn denies_with_instance(
+        &self,
+        action: &str,
+        resource_type: &str,
+        instance: Option<&str>,
+        context: &HashMap<String, String>,
+    ) -> bool {
+        self.active
+            && self
+                .permissions
+                .denies(action, resource_type, instance, context)
+    }
+
     /// Get all permissions granted by this role.
     pub fn permissions(&self) -> &PermissionSet {
         &self.permissions
@@ -675,7 +689,8 @@ impl RoleBuilder {
         self
     }
 
-    /// Add permissions with deny semantics (creates negative conditions).
+    /// Add deny rules. A deny overrides every grant of the same action and resource, including
+    /// grants in other roles the subject holds.
     ///
     /// # Example
     /// ```rust
@@ -693,10 +708,8 @@ impl RoleBuilder {
     {
         let resource = resource.into();
         for action in actions {
-            // Create a permission with a condition that always returns false
-            let deny_permission =
-                Permission::with_condition(action.into(), resource.clone(), |_| false);
-            self.permissions.push(deny_permission);
+            self.permissions
+                .push(Permission::deny(action.into(), resource.clone()));
         }
         self
     }
@@ -774,29 +787,49 @@ impl RoleBuilder {
 #[cfg(feature = "persistence")]
 mod instant_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-    pub fn serialize<S>(_instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+    /// The creation time is saved as wall-clock nanoseconds since the Unix epoch: now minus the
+    /// elevation's age.
+    pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        // Convert Instant to a duration since a reference point
-        // Note: This is a simplified approach and may not work across process restarts
-        let duration_since_epoch = SystemTime::now()
+        let age = Instant::now().saturating_duration_since(*instant);
+        let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        duration_since_epoch.serialize(serializer)
+            .map_err(serde::ser::Error::custom)?;
+        now.saturating_sub(age).as_nanos().serialize(serializer)
     }
 
+    /// The saved wall-clock time is turned back into an age, so time that passed while the
+    /// process was not running counts against the elevation. A time in the future (a clock
+    /// that went backwards) is an age of zero. An age too large for the monotonic clock to
+    /// represent is clamped to the largest it can, which is still older than any elevation
+    /// that could have been made before it.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Instant, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let _nanos = u128::deserialize(deserializer)?;
-        // This is a simplified approach - in a real implementation you'd want
-        // to store a reference point and calculate relative to that
-        Ok(Instant::now())
+        let nanos = u128::deserialize(deserializer)?;
+        let created = Duration::new(
+            u64::try_from(nanos / 1_000_000_000).map_err(serde::de::Error::custom)?,
+            (nanos % 1_000_000_000) as u32,
+        );
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(serde::de::Error::custom)?;
+        let mut age = now.saturating_sub(created);
+        let instant_now = Instant::now();
+        loop {
+            if let Some(i) = instant_now.checked_sub(age) {
+                return Ok(i);
+            }
+            if age.is_zero() {
+                return Ok(instant_now);
+            }
+            age /= 2;
+        }
     }
 }
 
