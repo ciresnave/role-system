@@ -404,8 +404,15 @@ where
             format!("{sorted_context:?}")
         };
 
-        // Simplified cache key
-        let permission_key = format!("{}:{}:{}", action, resource.id(), context_hash);
+        // The key must identify the whole question: action, resource type, resource id
+        // and context. `{:?}` escapes each field, so field boundaries cannot be forged.
+        let permission_key = format!(
+            "{:?}|{:?}|{:?}|{}",
+            action,
+            resource.resource_type(),
+            resource.id(),
+            context_hash
+        );
         let cache_key = (subject.id().to_string(), permission_key);
 
         // Check cache first
@@ -718,10 +725,17 @@ where
         context: &HashMap<String, String>,
     ) -> Result<bool> {
         let subject_roles = self.get_subject_roles(subject)?;
+        // An empty resource id means "no specific instance".
+        let instance = Some(resource.id()).filter(|id| !id.is_empty());
 
         for role_name in subject_roles {
             if let Some(role) = self.storage.get_role(&role_name)?
-                && role.has_permission(action, resource.resource_type(), context)
+                && role.has_permission_with_instance(
+                    action,
+                    resource.resource_type(),
+                    instance,
+                    context,
+                )
             {
                 return Ok(true);
             }

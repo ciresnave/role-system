@@ -300,6 +300,24 @@ impl Role {
         self.permissions.grants(action, resource_type, context)
     }
 
+    /// Check if this role grants permission for an action on a resource type, honouring
+    /// permission instances. A permission without an instance covers every instance; a
+    /// permission with an instance covers only that instance (or any, if it is `"*"`), and
+    /// never a request that names no instance.
+    pub fn has_permission_with_instance(
+        &self,
+        action: &str,
+        resource_type: &str,
+        instance: Option<&str>,
+        context: &HashMap<String, String>,
+    ) -> bool {
+        if !self.active {
+            return false;
+        }
+        self.permissions
+            .grants_with_instance(action, resource_type, instance, context)
+    }
+
     /// Get all permissions granted by this role.
     pub fn permissions(&self) -> &PermissionSet {
         &self.permissions
