@@ -368,9 +368,11 @@ mod tests {
     #[test]
     fn test_health_check_config() {
         let config = HealthCheckConfig {
-            storage_timeout: Duration::from_millis(200),
-            cache_timeout: Duration::from_millis(100),
-            metrics_timeout: Duration::from_millis(50),
+            // Generous limits: this test checks that the config is honoured, not speed, and
+            // sub-100 ms limits fail on slow or instrumented (coverage) runs.
+            storage_timeout: Duration::from_secs(5),
+            cache_timeout: Duration::from_secs(5),
+            metrics_timeout: Duration::from_secs(5),
         };
 
         let system = RoleSystem::new();

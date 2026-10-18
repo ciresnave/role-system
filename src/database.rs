@@ -20,6 +20,27 @@ pub struct DatabaseStorage {
     table_prefix: String,
 }
 
+/// Check that a table prefix is safe to splice into SQL identifiers.
+///
+/// This is what makes the `sqlx::AssertSqlSafe` wrappers below sound: every dynamic SQL string
+/// in this module is built from literals plus a table name derived from a validated prefix.
+#[cfg(feature = "database")]
+fn validate_table_prefix(prefix: &str) -> Result<()> {
+    let valid = !prefix.is_empty()
+        && prefix.len() <= 32
+        && !prefix.starts_with(|c: char| c.is_ascii_digit())
+        && prefix
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::Storage(format!(
+            "Invalid table prefix {prefix:?}: use 1-32 ASCII letters, digits or underscores, not starting with a digit"
+        )))
+    }
+}
+
 #[cfg(feature = "database")]
 impl DatabaseStorage {
     /// Create a new database storage backend.
@@ -40,7 +61,11 @@ impl DatabaseStorage {
     }
 
     /// Create a new database storage backend with custom table prefix.
+    ///
+    /// The prefix is interpolated into SQL identifiers, so it must be 1-32 ASCII letters,
+    /// digits or underscores and must not start with a digit; anything else is rejected.
     pub async fn new_with_prefix(database_url: &str, table_prefix: String) -> Result<Self> {
+        validate_table_prefix(&table_prefix)?;
         let pool = PgPool::connect(database_url)
             .await
             .map_err(|e| Error::Storage(format!("Database connection failed: {}", e)))?;
@@ -122,24 +147,24 @@ impl DatabaseStorage {
         );
 
         // Execute schema creation
-        sqlx::query(&create_roles)
+        sqlx::query(sqlx::AssertSqlSafe(create_roles.as_str()))
             .execute(&self.pool)
             .await
             .map_err(|e| Error::Storage(format!("Failed to create roles table: {}", e)))?;
 
-        sqlx::query(&create_role_permissions)
+        sqlx::query(sqlx::AssertSqlSafe(create_role_permissions.as_str()))
             .execute(&self.pool)
             .await
             .map_err(|e| {
                 Error::Storage(format!("Failed to create role_permissions table: {}", e))
             })?;
 
-        sqlx::query(&create_subjects)
+        sqlx::query(sqlx::AssertSqlSafe(create_subjects.as_str()))
             .execute(&self.pool)
             .await
             .map_err(|e| Error::Storage(format!("Failed to create subjects table: {}", e)))?;
 
-        sqlx::query(&create_subject_roles)
+        sqlx::query(sqlx::AssertSqlSafe(create_subject_roles.as_str()))
             .execute(&self.pool)
             .await
             .map_err(|e| Error::Storage(format!("Failed to create subject_roles table: {}", e)))?;
@@ -175,7 +200,7 @@ impl DatabaseStorage {
 
         // Delete existing permissions for this role
         let delete_query = format!("DELETE FROM {} WHERE role_name = $1", table);
-        sqlx::query(&delete_query)
+        sqlx::query(sqlx::AssertSqlSafe(delete_query.as_str()))
             .bind(role_name)
             .execute(&self.pool)
             .await
@@ -188,7 +213,7 @@ impl DatabaseStorage {
                 table
             );
 
-            sqlx::query(&insert_query)
+            sqlx::query(sqlx::AssertSqlSafe(insert_query.as_str()))
                 .bind(role_name)
                 .bind(permission.action())
                 .bind(permission.resource_type())
@@ -212,7 +237,7 @@ impl DatabaseStorage {
             table
         );
 
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(role_name)
             .fetch_all(&self.pool)
             .await
@@ -260,7 +285,7 @@ impl DatabaseStorage {
             roles_table
         );
 
-        sqlx::query(&upsert_query)
+        sqlx::query(sqlx::AssertSqlSafe(upsert_query.as_str()))
             .bind(role.name())
             .bind(role.description())
             .bind(role.is_active())
@@ -287,7 +312,7 @@ impl DatabaseStorage {
             roles_table
         );
 
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(name)
             .fetch_optional(&self.pool)
             .await
@@ -328,7 +353,7 @@ impl DatabaseStorage {
             roles_table
         );
 
-        let result = sqlx::query(&update_query)
+        let result = sqlx::query(sqlx::AssertSqlSafe(update_query.as_str()))
             .bind(name)
             .execute(&self.pool)
             .await
@@ -345,7 +370,7 @@ impl DatabaseStorage {
             roles_table
         );
 
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .bind(name)
             .fetch_optional(&self.pool)
             .await
@@ -362,7 +387,7 @@ impl DatabaseStorage {
             roles_table
         );
 
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .fetch_all(&self.pool)
             .await
             .map_err(|e| Error::Storage(format!("Failed to list roles: {}", e)))?;
@@ -379,7 +404,7 @@ impl DatabaseStorage {
             roles_table
         );
 
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
             .fetch_one(&self.pool)
             .await
             .map_err(|e| Error::Storage(format!("Failed to count roles: {}", e)))?;
@@ -540,5 +565,24 @@ mod tests {
     async fn test_database_health_check() {
         let storage = setup_test_db().await;
         assert!(storage.health_check().await.unwrap());
+    }
+
+    #[test]
+    fn table_prefix_validation() {
+        for ok in ["rbac_", "a", "App_1_", &"x".repeat(32)] {
+            assert!(validate_table_prefix(ok).is_ok(), "{ok:?}");
+        }
+        for bad in [
+            "",
+            "1abc",
+            "a b",
+            "a;DROP TABLE x;--",
+            "a\"b",
+            "a-b",
+            "é",
+            &"x".repeat(33),
+        ] {
+            assert!(validate_table_prefix(bad).is_err(), "{bad:?}");
+        }
     }
 }

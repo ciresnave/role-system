@@ -367,11 +367,23 @@ mod tests {
 
     #[test]
     fn test_subject_type_parsing() {
-        assert!(matches!("user".parse::<SubjectType>().unwrap(), SubjectType::User));
-        assert!(matches!("group".parse::<SubjectType>().unwrap(), SubjectType::Group));
-        assert!(matches!("service".parse::<SubjectType>().unwrap(), SubjectType::Service));
-        assert!(matches!("device".parse::<SubjectType>().unwrap(), SubjectType::Device));
-        
+        assert!(matches!(
+            "user".parse::<SubjectType>().unwrap(),
+            SubjectType::User
+        ));
+        assert!(matches!(
+            "group".parse::<SubjectType>().unwrap(),
+            SubjectType::Group
+        ));
+        assert!(matches!(
+            "service".parse::<SubjectType>().unwrap(),
+            SubjectType::Service
+        ));
+        assert!(matches!(
+            "device".parse::<SubjectType>().unwrap(),
+            SubjectType::Device
+        ));
+
         match "custom_type".parse::<SubjectType>().unwrap() {
             SubjectType::Custom(s) => assert_eq!(s, "custom_type"),
             _ => panic!("Expected custom type"),
