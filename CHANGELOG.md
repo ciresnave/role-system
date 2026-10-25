@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - Unreleased
+
+### 🔧 Maintenance
+
+- CI only: workflow actions are pinned to full commit SHAs (tag kept in a trailing comment); `dtolnay/rust-toolchain` steps pass an explicit `toolchain` input because a SHA no longer carries the branch name; workflows default to `contents: read`. The `postgres:16` service container is pinned by digest (`postgres@sha256:9e2cf628…`, tag in a comment).
+- Added `.github/CODEOWNERS` (`* @ciresnave`).
+
 ## [1.1.2] - 2026-10-18
 
 ### 🔧 Maintenance
