@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - Unreleased
+
+### 🔧 Maintenance
+
+- CI only: workflow actions are pinned to full commit SHAs (tag kept in a trailing comment); `dtolnay/rust-toolchain` steps pass an explicit `toolchain` input because a SHA no longer carries the branch name; workflows default to `contents: read`. The `postgres:16` service container is pinned by digest (`postgres@sha256:9e2cf628…`, tag in a comment).
+- Added `.github/CODEOWNERS` (`* @ciresnave`).
+- Security Audit fixed at its cause: `Cargo.lock` held three crates with open advisories (`ctutils` 0.4.3, RUSTSEC-2026-0385; `rustls-webpki` 0.103.15, RUSTSEC-2026-0382; `webpki-roots` 1.0.9, RUSTSEC-2026-0381). Lock-only update to 0.4.7, 0.103.16 and 1.0.11; `cargo audit` exits 0. No source or `Cargo.toml` dependency change.
+
 ## [1.1.2] - 2026-10-18
 
 ### 🔧 Maintenance
