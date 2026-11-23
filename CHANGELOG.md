@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.1] - Unreleased
 
+### Security
+
+- Dependencies: `url` 2.5.8 to 2.5.9 and `form_urlencoded` 1.2.2 to 1.2.3 in `Cargo.lock` (RUSTSEC-2026-0592: `Url::origin()` stack overflow on nested `blob:` URLs). Lockfile only; no source change.
+
 ### 🔧 Maintenance
 
 - CI only: workflow actions are pinned to full commit SHAs (tag kept in a trailing comment); `dtolnay/rust-toolchain` steps pass an explicit `toolchain` input because a SHA no longer carries the branch name; workflows default to `contents: read`. The `postgres:16` service container is pinned by digest (`postgres@sha256:9e2cf628…`, tag in a comment).
