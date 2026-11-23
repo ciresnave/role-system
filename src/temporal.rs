@@ -5,7 +5,6 @@ use crate::{
     permission::Permission,
 };
 use chrono::{DateTime, Datelike, Duration, NaiveTime, Utc, Weekday};
-use chrono_tz::Tz;
 
 /// Time-based permission that includes temporal constraints.
 #[derive(Debug, Clone)]
@@ -227,9 +226,13 @@ impl Schedule {
 
     /// Check if the schedule is valid at the given time.
     pub fn is_valid_at(&self, time: DateTime<Utc>) -> bool {
-        // Convert UTC time to the target timezone using chrono-tz
-        let target_tz: Tz = self.timezone.parse().unwrap_or(chrono_tz::UTC);
-        let local_time = time.with_timezone(&target_tz);
+        // Convert UTC time to the target timezone with jiff's bundled IANA database (chrono-tz is
+        // unmaintained, RUSTSEC-2026-0555); an unknown name falls back to UTC as before.
+        let target_tz = jiff::tz::TimeZone::get(&self.timezone).unwrap_or(jiff::tz::TimeZone::UTC);
+        let offset_seconds = jiff::Timestamp::from_second(time.timestamp())
+            .map(|ts| target_tz.to_offset(ts).seconds())
+            .unwrap_or(0);
+        let local_time = time.naive_utc() + chrono::Duration::seconds(i64::from(offset_seconds));
 
         let weekday = local_time.weekday();
         if !self.weekdays.contains(&weekday) {
@@ -442,6 +445,29 @@ mod tests {
         // Monday 6 PM should not be valid (after business hours)
         let monday_6pm = Utc.with_ymd_and_hms(2024, 1, 1, 18, 0, 0).unwrap();
         assert!(!schedule.is_valid_at(monday_6pm));
+    }
+
+    #[test]
+    fn test_schedule_converts_to_the_named_zone_with_dst() {
+        let schedule = Schedule::business_hours("America/New_York".to_string());
+
+        // Jan 1, 2024 (Monday), EST = UTC-5: 14:00Z is 09:00 local, 13:59Z is 08:59 local.
+        assert!(schedule.is_valid_at(Utc.with_ymd_and_hms(2024, 1, 1, 14, 0, 0).unwrap()));
+        assert!(!schedule.is_valid_at(Utc.with_ymd_and_hms(2024, 1, 1, 13, 59, 0).unwrap()));
+
+        // Jul 1, 2024 (Monday), EDT = UTC-4: 13:00Z is 09:00 local, 12:59Z is 08:59 local.
+        assert!(schedule.is_valid_at(Utc.with_ymd_and_hms(2024, 7, 1, 13, 0, 0).unwrap()));
+        assert!(!schedule.is_valid_at(Utc.with_ymd_and_hms(2024, 7, 1, 12, 59, 0).unwrap()));
+
+        // 03:00Z on Tuesday Jan 2 is 22:00 Monday local: after hours.
+        assert!(!schedule.is_valid_at(Utc.with_ymd_and_hms(2024, 1, 2, 3, 0, 0).unwrap()));
+    }
+
+    #[test]
+    fn test_schedule_unknown_zone_falls_back_to_utc() {
+        let schedule = Schedule::business_hours("Not/AZone".to_string());
+        assert!(schedule.is_valid_at(Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap()));
+        assert!(!schedule.is_valid_at(Utc.with_ymd_and_hms(2024, 1, 1, 18, 0, 0).unwrap()));
     }
 
     #[test]
