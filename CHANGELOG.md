@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Dependencies: `chrono-tz` 0.10 replaced by `jiff` 1 (bundled IANA database) for the schedule time-zone conversion in `temporal.rs` (RUSTSEC-2026-0555: `chrono-tz` is unmaintained, no upgrade exists). Same behaviour: an unknown zone name still falls back to UTC; two tests added (America/New_York across DST, unknown-zone fallback).
 
+- Dependencies: `sqlx` 0.9.0 to 0.9.1 (its `sqlx-sqlite` allows `libsqlite3-sys` 0.39 and newer) and `libsqlite3-sys` 0.37.0 to 0.40.0 in `Cargo.lock` (RUSTSEC-2026-0459). Lockfile only; no source change.
+
 ## [1.3.1] - Unreleased
 
 ### 🔧 Maintenance
