@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Dependencies: `url` 2.5.8 to 2.5.9 and `form_urlencoded` 1.2.2 to 1.2.3 in `Cargo.lock` (RUSTSEC-2026-0592: `Url::origin()` stack overflow on nested `blob:` URLs). Lockfile only; no source change.
 
+- Dependencies: `chrono-tz` 0.10 replaced by `jiff` 1 (bundled IANA database) for the schedule time-zone conversion in `temporal.rs` (RUSTSEC-2026-0555: `chrono-tz` is unmaintained, no upgrade exists). Same behaviour: an unknown zone name still falls back to UTC; two tests added (America/New_York across DST, unknown-zone fallback).
+
 ## [1.3.1] - Unreleased
 
 ### 🔧 Maintenance
